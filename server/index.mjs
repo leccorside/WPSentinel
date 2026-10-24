@@ -5,21 +5,28 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import express from 'express';
-import { loadSites } from '../src/config.mjs';
+import { createAuthManager } from './auth.mjs';
+import { createOrchestrator } from './orchestrator.mjs';
+import { createOrchestratorRouter } from './api-orchestrator.mjs';
 import { createReadRouter } from './api-read.mjs';
-import { ENV_FILE, WEB_DIR, isLoopback, panelSettings, readEnvFile } from './config.mjs';
+import { ENV_FILE, ROOT_DIR, WEB_DIR, isLoopback, panelSettings, readEnvFile } from './config.mjs';
 
 const startedAt = new Date();
 const settings = panelSettings();
 
-// Trava de segurança: exposto fora da máquina (ex.: VPS) só com senha. O login em si chega no Passo 4.
+// Trava de segurança: exposto fora da máquina (ex.: VPS) só com senha.
 if (!isLoopback(settings.host) && !settings.password) {
   console.error(`PANEL_HOST=${settings.host} expõe o painel fora desta máquina. Defina PANEL_PASSWORD no .env ou use PANEL_HOST=127.0.0.1.`);
   process.exit(1);
 }
 
+const auth = createAuthManager(settings);
+const orchestrator = createOrchestrator({ rootDir: ROOT_DIR });
+
 const app = express();
 app.disable('x-powered-by');
+app.use(express.json());
+app.use(auth.authMiddleware);
 
 app.get('/api/health', async (req, res) => {
   res.json({
@@ -33,7 +40,9 @@ app.get('/api/health', async (req, res) => {
   });
 });
 
-app.use('/api', createReadRouter({ paths: settings.paths }));
+app.use('/api/auth', auth.authRouter);
+app.use('/api', createOrchestratorRouter({ orchestrator }));
+app.use('/api', createReadRouter({ paths: settings.paths, getRuntime: orchestrator.getRuntime }));
 app.use('/api', (req, res) => res.status(404).json({ error: 'Rota não encontrada' }));
 
 // Front (SPA): arquivos estáticos e index.html para qualquer outra rota.
@@ -49,8 +58,9 @@ const server = app.listen(settings.port, settings.listen, () => {
 });
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.on(signal, () => {
-    console.log(`${signal} recebido; encerrando o painel.`);
+  process.on(signal, async () => {
+    console.log(`${signal} recebido; encerrando o painel e processos filhos.`);
+    await orchestrator.stopMonitor();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 5000).unref();
   });

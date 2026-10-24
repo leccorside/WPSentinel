@@ -55,11 +55,15 @@ let cycleSites = new Map();
 let state = await loadState();
 let cycle = Number(state.cycle || 0);
 let stopping = false;
+let wakeWait = null;
 
-process.on('SIGINT', () => {
-  stopping = true;
-  console.log('\nEncerrando após o ciclo atual...');
-});
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.on(signal, () => {
+    stopping = true;
+    console.log('\nEncerrando monitor...');
+    if (wakeWait) wakeWait();
+  });
+}
 
 await fs.mkdir(DATA_DIR, { recursive: true });
 if (RESET_BASELINE) {
@@ -757,5 +761,15 @@ function safeHostname(url) {
 }
 
 function wait(milliseconds) {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      wakeWait = null;
+      resolve();
+    }, milliseconds);
+    wakeWait = () => {
+      clearTimeout(timer);
+      wakeWait = null;
+      resolve();
+    };
+  });
 }
