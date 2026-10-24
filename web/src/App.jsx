@@ -278,8 +278,11 @@ export default function App() {
             <ScannerView
               sites={sitesList}
               selectedSite={selectedSite}
+              onSelectSite={setSelectedSite}
               onTriggerScan={() => triggerJob('scan')}
               onTriggerFullScan={() => triggerJob('scan_full')}
+              overviewData={overview}
+              statusData={status}
             />
           )}
 
