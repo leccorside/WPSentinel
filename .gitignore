@@ -2,8 +2,11 @@ node_modules/
 .env
 .monitor-data/
 *.log
+uxui/
 
 # Relatórios diários gerados pela varredura e pela limpeza (citam usuários, IPs e caminhos do servidor)
 reports/
 
 CONTEXTO.md
+
+

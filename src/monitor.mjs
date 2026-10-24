@@ -28,7 +28,7 @@ const REPORTS_DIR = path.join(ROOT_DIR, 'reports');
 const ONCE = process.argv.includes('--once');
 const RESET_BASELINE = process.argv.includes('--reset-baseline');
 const INTERVAL_MS = Math.max(30, Number(process.env.INTERVAL_SECONDS || 300)) * 1000;
-const FULL_HASH_EVERY = Math.max(1, Number(process.env.FULL_HASH_EVERY || 12));
+const FULL_HASH_EVERY = Math.max(1, Number(process.env.FULL_HASH_EVERY || 24));
 const MAX_DOWNLOAD_BYTES = Math.max(1024, Number(process.env.MAX_DOWNLOAD_BYTES || 8 * 1024 * 1024));
 
 // Sites, caminhos, bancos e acessos vêm do .env (ver src/config.mjs).

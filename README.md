@@ -70,6 +70,19 @@ Para incluir um site, crie o bloco dele e acrescente o prefixo em `SITES`; para 
 da lista. A primeira varredura de um site novo salva o estado atual como referência. Não mude
 `<PREFIXO>_KEY` de um site que já tem histórico: é ela que liga o site aos dados em `.monitor-data`.
 
+### Frequência e hash completo
+
+- `INTERVAL_SECONDS` (padrão 300): espera entre o fim de um ciclo e o início do próximo no `run-monitor.cmd`.
+- `FULL_HASH_EVERY` (padrão 24): de quantos em quantos ciclos o
+  monitor baixa todos os arquivos monitorados e recalcula o SHA-256 de cada um, para pegar alterações que
+  preservam tamanho e data. Nos demais ciclos ele só lista os diretórios e baixa os arquivos novos ou com
+  tamanho/data diferentes. Com 300 s de intervalo, 24 equivale a um hash completo a cada 4 horas, mais ou menos.
+- Os ciclos de hash completo (múltiplos de `FULL_HASH_EVERY`; o número do ciclo é contínuo e inclui as
+  varreduras do `run-scan.cmd`) levam mais que o dobro do tempo, e o console fica minutos parado em
+  "inventariando arquivos..." no site maior. Isso é esperado, não é travamento. O primeiro ciclo de um site
+  novo também faz hash completo.
+- `MAX_DOWNLOAD_BYTES` (padrão 8 MiB): arquivos maiores não são baixados para hash nem inspeção.
+
 ## Limpeza assistida
 
 Execute `run-cleanup.cmd` depois que o monitor gerar alertas. O programa:
