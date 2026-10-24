@@ -86,6 +86,14 @@ da lista. A primeira varredura de um site novo salva o estado atual como referê
   baixa todos os arquivos.
 - `MAX_DOWNLOAD_BYTES` (padrão 8 MiB): arquivos maiores não são baixados para hash nem inspeção.
 
+## Painel web (Docker) — em construção
+
+O painel React está sendo construído em etapas (ver `PASSOS.md`). Para subir o que já existe:
+`docker compose up -d --build` e abrir <http://127.0.0.1:8787> (o `.env` precisa existir antes). Status em
+`docker compose ps`, logs em `docker compose logs -f` e para parar `docker compose down`. Os dados continuam em
+`.monitor-data/` e `reports/` (montados no container), então os `.cmd` e o painel enxergam o mesmo histórico, mas
+não rode os dois ao mesmo tempo.
+
 ## Limpeza assistida
 
 Execute `run-cleanup.cmd` depois que o monitor gerar alertas. O programa:

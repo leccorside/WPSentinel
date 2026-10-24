@@ -1,0 +1,31 @@
+# WP Sentinel no Docker: docker compose up -d --build  →  http://127.0.0.1:8787
+# PANEL_HOST e PANEL_PORT vêm do .env (padrão 127.0.0.1:8787, só esta máquina). Fora do loopback (ex.: VPS) o
+# painel exige PANEL_PASSWORD no .env.
+services:
+  wp-sentinel:
+    build: .
+    image: wp-sentinel:latest
+    container_name: wp-sentinel
+    init: true
+    restart: unless-stopped
+    environment:
+      TZ: America/Sao_Paulo
+      PANEL_HOST: ${PANEL_HOST:-127.0.0.1}
+      PANEL_PORT: ${PANEL_PORT:-8787}
+      # Caminhos dentro do container. DATA_DIR/REPORTS_DIR do .env são caminhos do host (volumes abaixo); o motor
+      # não sobrescreve variáveis que já vêm do ambiente, então estes valem para monitor, limpeza e painel.
+      DATA_DIR: /app/.monitor-data
+      REPORTS_DIR: /app/reports
+    ports:
+      - "${PANEL_HOST:-127.0.0.1}:${PANEL_PORT:-8787}:${PANEL_PORT:-8787}"
+    volumes:
+      # O .env precisa existir antes de subir (sem ele o Docker cria uma pasta com esse nome).
+      - ./.env:/app/.env
+      - ${DATA_DIR:-./.monitor-data}:/app/.monitor-data
+      - ${REPORTS_DIR:-./reports}:/app/reports
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:' + (process.env.PANEL_PORT || 8787) + '/api/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

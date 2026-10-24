@@ -11,17 +11,16 @@ import mysql from 'mysql2/promise';
 import { findHiddenBlocks, scanElementorData } from './hidden-links.mjs';
 import { lookupServerIps, parseSessions, suspiciousReasons } from './sessions.mjs';
 import { MARKER_DIRS, isMalwareMarker } from './malware-markers.mjs';
-import { assertSftp, loadSites, sftpKey } from './config.mjs';
+import { assertSftp, dataPaths, loadSites, sftpKey } from './config.mjs';
 import { classifyPhp, isCacheRootPhp, isDropin } from './dropins.mjs';
 import { appendSection, bullet, dateBR, number, timeBR } from './report.mjs';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(SCRIPT_DIR, '..');
-const DATA_DIR = path.join(ROOT_DIR, '.monitor-data');
+const { dataDir: DATA_DIR, reportsDir: REPORTS_DIR } = dataPaths(ROOT_DIR);
 const STATE_FILE = path.join(DATA_DIR, 'state.json');
 const BASELINE_FILE = path.join(DATA_DIR, 'trusted-baseline.json');
 const ALERT_FILE = path.join(DATA_DIR, 'alerts.jsonl');
-const REPORTS_DIR = path.join(ROOT_DIR, 'reports');
 
 const ONCE = process.argv.includes('--once');
 const RESET_BASELINE = process.argv.includes('--reset-baseline');

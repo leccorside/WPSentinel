@@ -1,0 +1,12 @@
+# Segredos e dados chegam por volume, nunca dentro da imagem.
+.env
+.monitor-data
+reports
+
+node_modules
+web/node_modules
+web/dist
+uxui
+.git
+*.log
+*.cmd

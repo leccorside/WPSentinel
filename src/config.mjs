@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 // Configuração dos sites a partir do .env. Nenhum dado de site fica no código.
 //
 // SITES=MEUSITE,OUTRO              prefixos dos sites monitorados, separados por vírgula
@@ -66,6 +68,13 @@ export function loadSites(source = process.env) {
         : null,
     };
   });
+}
+
+// Pastas de dados e relatórios: padrão dentro do projeto; DATA_DIR e REPORTS_DIR (absolutos ou relativos à raiz
+// do projeto) permitem mudar o lugar, por exemplo numa VPS.
+export function dataPaths(rootDir, source = process.env) {
+  const resolve = (value, fallback) => path.resolve(rootDir, value || fallback);
+  return { dataDir: resolve(source.DATA_DIR, '.monitor-data'), reportsDir: resolve(source.REPORTS_DIR, 'reports') };
 }
 
 // Uma conexão SFTP por credencial: sites na mesma hospedagem compartilham a conexão.

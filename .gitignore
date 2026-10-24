@@ -3,6 +3,7 @@ node_modules/
 .monitor-data/
 *.log
 uxui/
+web/dist/
 
 # Relatórios diários gerados pela varredura e pela limpeza (citam usuários, IPs e caminhos do servidor)
 reports/

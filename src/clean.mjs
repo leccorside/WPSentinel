@@ -12,18 +12,17 @@ import mysql from 'mysql2/promise';
 import { serialize, unserialize } from 'php-serialize';
 import { cleanElementorRaw, findHiddenBlocks, scanElementorData, stripHiddenBlocks } from './hidden-links.mjs';
 import { MARKER_DIRS, isMalwareMarker } from './malware-markers.mjs';
-import { assertSftp, loadSites, sftpKey } from './config.mjs';
+import { assertSftp, dataPaths, loadSites, sftpKey } from './config.mjs';
 import { DROPIN_FILES, classifyPhp, isCacheRootPhp, isDropin } from './dropins.mjs';
 import { appendSection, bullet, dateBR, timeBR } from './report.mjs';
 
 const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const DATA_DIR = path.join(ROOT_DIR, '.monitor-data');
+const { dataDir: DATA_DIR, reportsDir: REPORTS_DIR } = dataPaths(ROOT_DIR);
 const STATE_FILE = path.join(DATA_DIR, 'state.json');
 const BASELINE_FILE = path.join(DATA_DIR, 'trusted-baseline.json');
 const ALERT_FILE = path.join(DATA_DIR, 'alerts.jsonl');
 const PLAN_FILE = path.join(DATA_DIR, 'last-cleanup-plan.json');
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
-const REPORTS_DIR = path.join(ROOT_DIR, 'reports');
 const MALICIOUS_PLUGIN = /^(vapor-curator-tap|pulse-beacon-ops|cloudflare-v2-23|script-4aec0f13-4aec0f13|wordpress-site-editor-e64d0d1c|wp-security-helper|smart-toolkit-plus|database-framework-edition|performance-fix-pro|smart-fix-edition|system-fix-plus|smart-cleaner-plus|smart-fix-pro|core-manager-plus|seo-patch-max|classic-cleaner-bundle|core-scanner-standard|wpueditors|fileorganizer|code-snippets)$|^(gallery|security|custom|widget)[_-]17781\d{5}$/;
 const PLAN_ONLY = process.argv.includes('--plan');
 
