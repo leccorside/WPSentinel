@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 
 // Hook para gerenciar conexão SSE com /api/events
-export function useEvents({ enabled = true, onMonitor, onJob } = {}) {
+export function useEvents({ enabled = true, onMonitor, onJob, onAlert, onNotification, onNotificationsUpdated } = {}) {
   const [logs, setLogs] = useState([]);
   const [connected, setConnected] = useState(false);
 
@@ -49,6 +49,27 @@ export function useEvents({ enabled = true, onMonitor, onJob } = {}) {
         try {
           const job = JSON.parse(e.data);
           if (onJob) onJob(job);
+        } catch {}
+      });
+
+      es.addEventListener('alert', (e) => {
+        try {
+          const alert = JSON.parse(e.data);
+          if (onAlert) onAlert(alert);
+        } catch {}
+      });
+
+      es.addEventListener('notification', (e) => {
+        try {
+          const notif = JSON.parse(e.data);
+          if (onNotification) onNotification(notif);
+        } catch {}
+      });
+
+      es.addEventListener('notifications_updated', (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          if (onNotificationsUpdated) onNotificationsUpdated(data);
         } catch {}
       });
     } catch {

@@ -7,6 +7,7 @@ import process from 'node:process';
 import express from 'express';
 import { createAuthManager } from './auth.mjs';
 import { createFeaturesRouter } from './api-features.mjs';
+import { createNotificationManager } from './notifications.mjs';
 import { createOrchestrator } from './orchestrator.mjs';
 import { createOrchestratorRouter } from './api-orchestrator.mjs';
 import { createReadRouter } from './api-read.mjs';
@@ -23,6 +24,12 @@ if (!isLoopback(settings.host) && !settings.password) {
 
 const auth = createAuthManager(settings);
 const orchestrator = createOrchestrator({ rootDir: ROOT_DIR });
+const notifications = createNotificationManager({
+  dataDir: settings.paths.dataDir,
+  orchestrator,
+});
+orchestrator.setNotificationHandler((notif) => notifications.addSystemNotification(notif));
+notifications.startAlertsWatcher();
 
 const app = express();
 app.disable('x-powered-by');
@@ -39,6 +46,25 @@ app.get('/api/health', async (req, res) => {
     data: await describeData(settings.paths.dataDir),
     reports: await describeReports(settings.paths.reportsDir),
   });
+});
+
+app.get('/api/notifications', async (req, res, next) => {
+  try {
+    const data = await notifications.getNotifications();
+    res.json(data);
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/notifications/read', async (req, res, next) => {
+  try {
+    const { id, all } = req.body || {};
+    const result = await notifications.markAsRead({ id, all: Boolean(all) });
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
 });
 
 app.use('/api/auth', auth.authRouter);
@@ -62,6 +88,7 @@ const server = app.listen(settings.port, settings.listen, () => {
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, async () => {
     console.log(`${signal} recebido; encerrando o painel e processos filhos.`);
+    notifications.stopAlertsWatcher();
     await orchestrator.stopMonitor();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 5000).unref();

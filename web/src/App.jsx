@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { api } from './api/client';
 import { useEvents } from './hooks/useEvents';
 import { Header } from './components/layout/Header';
@@ -25,12 +25,39 @@ export default function App() {
   const [status, setStatus] = useState(null);
   const [overview, setOverview] = useState(null);
   const [plan, setPlan] = useState(null);
+  const [notifications, setNotifications] = useState({ unreadCount: 0, hasCriticalUnread: false, items: [] });
 
-  // Modais
+  // Modais e Toasts
   const [isTerminalOpen, setIsTerminalOpen] = useState(false);
   const [isDoubleCheckOpen, setIsDoubleCheckOpen] = useState(false);
   const [cleanActionLoading, setCleanActionLoading] = useState(false);
   const [toastMessage, setToastMessage] = useState(null);
+  const [alertToast, setAlertToast] = useState(null);
+
+  const burstRef = useRef({
+    timer: null,
+    alerts: [],
+    seenIds: new Set(),
+  });
+
+  // Título da aba do navegador dinâmico com o número de alertas não lidos
+  useEffect(() => {
+    const unread = notifications?.unreadCount || 0;
+    if (unread > 0) {
+      document.title = `(${unread}) WP Sentinel`;
+    } else {
+      document.title = 'WP Sentinel';
+    }
+  }, [notifications?.unreadCount]);
+
+  // Timer para fechar alertToast automaticamente
+  useEffect(() => {
+    if (!alertToast) return;
+    const timer = setTimeout(() => {
+      setAlertToast(null);
+    }, 7000);
+    return () => clearTimeout(timer);
+  }, [alertToast]);
 
   const checkAuth = async () => {
     try {
@@ -43,6 +70,13 @@ export default function App() {
     }
   };
 
+  const loadNotifications = async () => {
+    try {
+      const data = await api.notifications.list();
+      setNotifications(data);
+    } catch {}
+  };
+
   const loadData = async () => {
     try {
       const [statusData, overviewData, planData] = await Promise.allSettled([
@@ -53,6 +87,7 @@ export default function App() {
       if (statusData.status === 'fulfilled') setStatus(statusData.value);
       if (overviewData.status === 'fulfilled') setOverview(overviewData.value);
       if (planData.status === 'fulfilled') setPlan(planData.value);
+      loadNotifications();
     } catch {}
   };
 
@@ -61,6 +96,59 @@ export default function App() {
       if (authed) loadData();
     });
   }, []);
+
+  // Processador de rajadas de alertas em tempo real
+  const handleIncomingAlert = (item) => {
+    const burst = burstRef.current;
+    if (item.id && burst.seenIds.has(item.id)) return;
+    if (item.id) {
+      burst.seenIds.add(item.id);
+      if (burst.seenIds.size > 500) {
+        const first = burst.seenIds.values().next().value;
+        burst.seenIds.delete(first);
+      }
+    }
+
+    burst.alerts.push(item);
+
+    if (burst.timer) clearTimeout(burst.timer);
+
+    burst.timer = setTimeout(() => {
+      const pendingAlerts = [...burst.alerts];
+      burst.alerts = [];
+
+      if (pendingAlerts.length === 0) return;
+
+      if (pendingAlerts.length === 1) {
+        const single = pendingAlerts[0];
+        setAlertToast({
+          id: single.id || `toast-${Date.now()}`,
+          severity: single.severity || 'critical',
+          site: single.site,
+          title: single.site && single.site !== 'sistema' && single.site !== 'geral' ? single.site : 'Aviso do Sistema',
+          message: single.message || single.title,
+          link: single.link || 'overview',
+          count: 1,
+        });
+      } else {
+        // Agrupamento de rajadas (ex.: "5 alertas críticos — adguarda.com.br")
+        const criticalCount = pendingAlerts.filter((a) => a.severity === 'critical').length;
+        const sites = Array.from(new Set(pendingAlerts.map((a) => a.site).filter(Boolean)));
+        const primarySite = sites.length === 1 ? sites[0] : `${sites.length} sites`;
+        const severityLabel = criticalCount > 0 ? 'críticos' : 'de alta prioridade';
+
+        setAlertToast({
+          id: `burst-${Date.now()}`,
+          severity: criticalCount > 0 ? 'critical' : 'high',
+          site: primarySite,
+          title: `${pendingAlerts.length} alertas ${severityLabel} — ${primarySite}`,
+          message: pendingAlerts.map((a) => a.title || a.message).slice(0, 3).join(' • ') + (pendingAlerts.length > 3 ? ` (+${pendingAlerts.length - 3})` : ''),
+          link: 'overview',
+          count: pendingAlerts.length,
+        });
+      }
+    }, 600);
+  };
 
   // SSE Realtime Hook
   const { logs, clearLogs, connected: sseConnected } = useEvents({
@@ -77,7 +165,69 @@ export default function App() {
         loadData();
       }
     },
+    onAlert: (alert) => {
+      if (alert.severity === 'critical' || alert.severity === 'high') {
+        handleIncomingAlert({
+          id: `alert-${alert.id}`,
+          site: alert.site,
+          severity: alert.severity,
+          message: alert.message,
+          title: alert.message,
+          link: 'overview',
+        });
+      }
+      loadNotifications();
+    },
+    onNotification: (notif) => {
+      setNotifications((prev) => {
+        const items = [notif, ...(prev?.items || [])].slice(0, 50);
+        const unreadCount = (prev?.unreadCount || 0) + 1;
+        const hasCriticalUnread = Boolean(prev?.hasCriticalUnread || notif.severity === 'critical');
+        return { ...prev, items, unreadCount, hasCriticalUnread };
+      });
+      if (notif.severity === 'critical' || notif.severity === 'high') {
+        handleIncomingAlert(notif);
+      }
+    },
+    onNotificationsUpdated: (data) => {
+      setNotifications((prev) => ({
+        ...prev,
+        unreadCount: data.unreadCount,
+        hasCriticalUnread: data.hasCriticalUnread,
+      }));
+    },
   });
+
+  const handleMarkRead = async (id) => {
+    try {
+      const res = await api.notifications.markRead(id);
+      setNotifications((prev) => ({
+        ...prev,
+        unreadCount: res.unreadCount,
+        hasCriticalUnread: res.hasCriticalUnread,
+        items: (prev?.items || []).map((item) => (item.id === id ? { ...item, read: true } : item)),
+      }));
+    } catch {}
+  };
+
+  const handleMarkAllRead = async () => {
+    try {
+      const res = await api.notifications.markAllRead();
+      setNotifications((prev) => ({
+        ...prev,
+        unreadCount: 0,
+        hasCriticalUnread: false,
+        items: (prev?.items || []).map((item) => ({ ...item, read: true })),
+      }));
+    } catch {}
+  };
+
+  const handleNavigateView = (view, siteFilter = null) => {
+    setActiveView(view);
+    if (siteFilter && siteFilter !== 'all') {
+      setSelectedSite(siteFilter);
+    }
+  };
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -221,11 +371,69 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-surface text-on-surface flex flex-col font-sans">
-      {/* Toast Notification */}
+      {/* Toast Notification Simples (Erros de ação) */}
       {toastMessage && (
         <div className="fixed top-20 right-6 z-50 p-4 rounded-lg bg-surface-container-high border border-error/40 text-error shadow-xl flex items-center gap-3 text-xs font-mono">
           <span>{toastMessage.text}</span>
           <button onClick={() => setToastMessage(null)} className="text-on-surface-variant hover:text-on-surface">
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* Toast de Alertas Críticos / Rajadas em Tempo Real */}
+      {alertToast && (
+        <div
+          onClick={() => {
+            handleNavigateView(alertToast.link || 'overview', alertToast.site !== 'sistema' && alertToast.site !== 'geral' ? alertToast.site : 'all');
+            setAlertToast(null);
+          }}
+          className={`fixed top-20 right-6 z-50 p-4 rounded-xl shadow-[0_16px_36px_rgba(0,0,0,0.8)] border flex items-start gap-3.5 max-w-md cursor-pointer animate-in fade-in slide-in-from-top-4 duration-200 backdrop-blur-xl ${
+            alertToast.severity === 'critical'
+              ? 'bg-surface-container-high/95 border-error/50 text-on-surface shadow-[0_0_24px_rgba(255,77,77,0.35)]'
+              : 'bg-surface-container-high/95 border-amber-500/50 text-on-surface shadow-[0_0_24px_rgba(245,158,11,0.25)]'
+          }`}
+        >
+          <div
+            className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 border ${
+              alertToast.severity === 'critical'
+                ? 'bg-error-container/30 border-error/40 text-error'
+                : 'bg-amber-500/10 border-amber-500/40 text-amber-400'
+            }`}
+          >
+            <span className="material-symbols-outlined text-xl">
+              {alertToast.severity === 'critical' ? 'crisis_alert' : 'warning'}
+            </span>
+          </div>
+
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-xs font-mono font-bold text-on-surface truncate">
+                {alertToast.title}
+              </span>
+              {alertToast.count > 1 && (
+                <span className="px-1.5 py-0.2 bg-error text-on-error rounded-full text-[10px] font-mono font-bold">
+                  +{alertToast.count}
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-on-surface-variant font-sans leading-snug line-clamp-2">
+              {alertToast.message}
+            </p>
+            <span className="inline-flex items-center gap-1 text-[11px] font-mono text-primary mt-1 hover:underline">
+              <span>Abrir no painel</span>
+              <span className="material-symbols-outlined text-xs">arrow_forward</span>
+            </span>
+          </div>
+
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setAlertToast(null);
+            }}
+            className="text-on-surface-variant hover:text-on-surface p-1 transition-colors"
+          >
             ✕
           </button>
         </div>
@@ -246,6 +454,10 @@ export default function App() {
         authRequired={authStatus.required}
         onLogout={handleLogout}
         isScanning={isScanning}
+        notifications={notifications}
+        onMarkRead={handleMarkRead}
+        onMarkAllRead={handleMarkAllRead}
+        onNavigateView={handleNavigateView}
       />
 
       {/* Sidebar */}

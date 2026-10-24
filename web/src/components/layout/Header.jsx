@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { NotificationsPopover } from '../common/NotificationsPopover';
 
 export function Header({
   sites = [],
@@ -14,7 +15,12 @@ export function Header({
   authRequired = false,
   onLogout,
   isScanning = false,
+  notifications = { unreadCount: 0, hasCriticalUnread: false, items: [] },
+  onMarkRead,
+  onMarkAllRead,
+  onNavigateView,
 }) {
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const daemonPill = {
     running: { dot: 'bg-primary animate-pulse', text: 'Varredura Ativa' },
     waiting: { dot: 'bg-secondary', text: 'Daemon Ativo' },
@@ -116,6 +122,42 @@ export function Header({
           <span className="material-symbols-outlined text-base">description</span>
           <span>Relatório Diário</span>
         </button>
+
+        {/* Sino de Notificações */}
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setIsNotificationsOpen((prev) => !prev)}
+            title="Central de Notificações do Perímetro"
+            className={`relative p-1.5 rounded-lg border transition-all cursor-pointer ${
+              isNotificationsOpen
+                ? 'bg-surface-container-high border-primary/50 text-primary'
+                : 'bg-surface-container hover:bg-surface-container-high border-outline-variant/30 text-on-surface-variant hover:text-on-surface'
+            }`}
+          >
+            <span className="material-symbols-outlined text-lg">notifications</span>
+            {notifications.unreadCount > 0 && (
+              <span
+                className={`absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full text-[10px] font-mono font-bold leading-none ${
+                  notifications.hasCriticalUnread
+                    ? 'bg-error text-on-error animate-pulse shadow-[0_0_8px_rgba(255,100,100,0.6)]'
+                    : 'bg-primary text-on-primary'
+                }`}
+              >
+                {notifications.unreadCount > 99 ? '99+' : notifications.unreadCount}
+              </span>
+            )}
+          </button>
+
+          <NotificationsPopover
+            isOpen={isNotificationsOpen}
+            onClose={() => setIsNotificationsOpen(false)}
+            notifications={notifications}
+            onMarkRead={onMarkRead}
+            onMarkAllRead={onMarkAllRead}
+            onNavigateView={onNavigateView}
+          />
+        </div>
 
         <button
           type="button"

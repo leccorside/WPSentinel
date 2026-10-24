@@ -86,4 +86,9 @@ export const api = {
     mark: (key, reviewed, notes = '') =>
       request('/api/manual-review/mark', { method: 'POST', body: JSON.stringify({ key, reviewed, notes }) }),
   },
+  notifications: {
+    list: () => request('/api/notifications'),
+    markRead: (id) => request('/api/notifications/read', { method: 'POST', body: JSON.stringify({ id }) }),
+    markAllRead: () => request('/api/notifications/read', { method: 'POST', body: JSON.stringify({ all: true }) }),
+  },
 };

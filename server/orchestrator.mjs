@@ -30,10 +30,21 @@ export const JOB_SPECS = {
   },
 };
 
-export function createOrchestrator({ rootDir }) {
+export function createOrchestrator({ rootDir, onNotification = null }) {
+  let notificationHandler = onNotification;
   let currentJob = null;
   let lastJob = null;
   let resumingMonitorAfterJob = false;
+
+  function notify(data) {
+    if (typeof notificationHandler === 'function') {
+      try {
+        notificationHandler(data);
+      } catch (err) {
+        console.error('Erro ao emitir notificação de sistema:', err.message);
+      }
+    }
+  }
 
   const monitor = {
     state: 'stopped', // 'stopped' | 'running' | 'waiting' | 'stopping' | 'paused'
@@ -197,12 +208,24 @@ export function createOrchestrator({ rootDir }) {
 
     child.on('close', (code, signal) => {
       appendLog('monitor', `Monitor encerrado (código: ${code ?? 'nenhum'}, sinal: ${signal ?? 'nenhum'})`, 'stdout');
+      const wasUnexpected = monitor.state !== 'stopping' && monitor.state !== 'paused';
       monitor.child = null;
       if (monitor.state !== 'paused') {
         monitor.state = 'stopped';
         monitor.nextRunEstimated = null;
       }
       broadcast('monitor', getRuntime().monitor);
+
+      if (wasUnexpected) {
+        notify({
+          type: 'monitor_stopped',
+          title: 'Monitor Parado Inesperadamente',
+          message: `O monitor contínuo parou inesperadamente (código ${code ?? 'nenhum'}).`,
+          severity: 'critical',
+          site: 'sistema',
+          details: { exitCode: code, signal },
+        });
+      }
     });
 
     child.on('error', (err) => {
@@ -210,6 +233,15 @@ export function createOrchestrator({ rootDir }) {
       monitor.child = null;
       monitor.state = 'stopped';
       broadcast('monitor', getRuntime().monitor);
+
+      notify({
+        type: 'monitor_stopped',
+        title: 'Falha no Monitor Contínuo',
+        message: `Erro no processo do monitor: ${err.message}`,
+        severity: 'critical',
+        site: 'sistema',
+        details: { error: err.message },
+      });
     });
 
     return getRuntime().monitor;
@@ -328,6 +360,16 @@ export function createOrchestrator({ rootDir }) {
             prompt: cleanLine,
           };
           broadcast('job', getRuntime().job);
+
+          notify({
+            type: 'clean_waiting_confirmation',
+            title: 'Limpeza Aguarda Confirmação',
+            message: `O plano de limpeza exige confirmação (${confirmMatch[1]} ação(ões) prontas).`,
+            severity: 'high',
+            site: 'sistema',
+            link: 'cleanup',
+            details: { code: confirmMatch[2], actionCount: Number(confirmMatch[1]) },
+          });
         }
       })
     );
@@ -353,6 +395,26 @@ export function createOrchestrator({ rootDir }) {
       currentJob = null;
       broadcast('job', getRuntime().job);
 
+      if (job.status === 'completed') {
+        notify({
+          type: 'job_completed',
+          title: 'Trabalho Concluído',
+          message: `${job.label} concluído com sucesso.`,
+          severity: 'info',
+          site: 'sistema',
+          details: { type: job.type, exitCode: code },
+        });
+      } else if (job.status === 'failed') {
+        notify({
+          type: 'job_failed',
+          title: 'Falha no Trabalho',
+          message: `${job.label} falhou (código de saída ${code}).`,
+          severity: 'high',
+          site: 'sistema',
+          details: { type: job.type, exitCode: code },
+        });
+      }
+
       // Retomada automática do monitor se ele foi pausado
       if (resumingMonitorAfterJob) {
         resumingMonitorAfterJob = false;
@@ -373,6 +435,15 @@ export function createOrchestrator({ rootDir }) {
       lastJob = { ...job, child: null };
       currentJob = null;
       broadcast('job', getRuntime().job);
+
+      notify({
+        type: 'job_failed',
+        title: 'Erro ao Iniciar Trabalho',
+        message: `Falha ao executar ${job.label}: ${err.message}`,
+        severity: 'high',
+        site: 'sistema',
+        details: { type: job.type, error: err.message },
+      });
 
       if (resumingMonitorAfterJob) {
         resumingMonitorAfterJob = false;
@@ -459,6 +530,10 @@ export function createOrchestrator({ rootDir }) {
     confirmClean,
     cancelClean,
     sseHandler,
+    broadcast,
+    setNotificationHandler: (fn) => {
+      notificationHandler = fn;
+    },
     getRecentLogs: () => recentLogs.slice(),
     getCurrentJobDetails: () => (currentJob ? { ...currentJob, child: undefined } : (lastJob ? { ...lastJob, child: undefined } : null)),
   };
