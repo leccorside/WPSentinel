@@ -101,7 +101,7 @@ function describeEnv() {
   const envFile = readEnvFile();
   if (!envFile) return { found: false, file: ENV_FILE };
   try {
-    return { found: true, sites: loadSites(envFile).map((site) => ({ key: site.key, name: site.name, url: site.url, db: site.db.enabled })) };
+    return { found: true, sites: loadSites(envFile, settings.paths.dataDir).map((site) => ({ key: site.key, name: site.name, url: site.url, db: site.db.enabled })) };
   } catch (error) {
     return { found: true, error: error.message };
   }

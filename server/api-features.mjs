@@ -13,7 +13,7 @@ import path from 'node:path';
 import express from 'express';
 import mysql from 'mysql2/promise';
 import SftpClient from 'ssh2-sftp-client';
-import { loadSites } from '../src/config.mjs';
+import { loadSites, saveSites, sanitizeSite } from '../src/config.mjs';
 import { lookupServerIps, parseSessions, suspiciousReasons } from '../src/sessions.mjs';
 import { ENV_FILE, readEnvFile } from './config.mjs';
 import { readAlerts, readBaseline, readPlan, readState, summarizeSite } from './data.mjs';
@@ -270,10 +270,162 @@ export function createFeaturesRouter({ paths }) {
     res.json({ ok: true, key, reviewed: Boolean(reviewed) });
   }));
 
+  // 6. Gestão Dinâmica de Sites (Configuração 100% via Tela)
+  router.get('/sites-manage', route(async (req, res) => {
+    const list = loadSites(readEnvFile() || {}, dataDir);
+    res.json({
+      sites: list.map((s) => ({
+        key: s.key,
+        name: s.name,
+        url: s.url,
+        remoteRoot: s.remoteRoot,
+        hasPassword: Boolean(s.sftp.password),
+        sftp: {
+          host: s.sftp.host,
+          port: s.sftp.port,
+          username: s.sftp.username,
+          hasPassword: Boolean(s.sftp.password),
+        },
+        db: {
+          enabled: Boolean(s.db?.enabled),
+          host: s.db?.host || '',
+          port: s.db?.port || 3306,
+          database: s.db?.database || '',
+          user: s.db?.user || '',
+          prefix: s.db?.prefix || 'wp_',
+          ssl: Boolean(s.db?.ssl),
+          hasPassword: Boolean(s.db?.password),
+        },
+        spamContentSince: s.spamContentSince,
+      })),
+    });
+  }));
+
+  router.post('/sites-manage', route(async (req, res) => {
+    const data = req.body || {};
+    const key = String(data.key || '').trim().toLowerCase();
+    if (!key || !/^[a-z0-9_-]+$/.test(key)) {
+      throw httpError(400, 'Identificador (key) inválido. Use apenas letras minúsculas, números e hífens.');
+    }
+
+    const currentSites = loadSites(readEnvFile() || {}, dataDir);
+    const existingIndex = currentSites.findIndex((s) => s.key === key);
+    const existing = existingIndex >= 0 ? currentSites[existingIndex] : null;
+
+    // Preserva senhas anteriores se não foram preenchidas na edição
+    const sftpPassword = data.sftp?.password && data.sftp.password !== '••••••••'
+      ? data.sftp.password
+      : existing?.sftp?.password || '';
+
+    const dbPassword = data.db?.password && data.db.password !== '••••••••'
+      ? data.db.password
+      : existing?.db?.password || '';
+
+    const newSite = sanitizeSite({
+      key,
+      name: data.name || key,
+      url: data.url,
+      remoteRoot: data.remoteRoot,
+      sftp: {
+        host: data.sftp?.host || '',
+        port: Number(data.sftp?.port || 22),
+        username: data.sftp?.username || '',
+        password: sftpPassword,
+      },
+      db: {
+        enabled: Boolean(data.db?.enabled),
+        host: data.db?.host || '',
+        port: Number(data.db?.port || 3306),
+        database: data.db?.database || '',
+        user: data.db?.user || '',
+        password: dbPassword,
+        prefix: data.db?.prefix || 'wp_',
+        ssl: Boolean(data.db?.ssl),
+      },
+      spamContentSince: data.spamContentSince || null,
+    });
+
+    let updatedList;
+    if (existingIndex >= 0) {
+      updatedList = [...currentSites];
+      updatedList[existingIndex] = newSite;
+    } else {
+      updatedList = [...currentSites, newSite];
+    }
+
+    saveSites(updatedList, dataDir);
+    res.json({ ok: true, site: newSite, totalSites: updatedList.length });
+  }));
+
+  router.delete('/sites-manage/:key', route(async (req, res) => {
+    const key = req.params.key;
+    const currentSites = loadSites(readEnvFile() || {}, dataDir);
+    const updatedList = currentSites.filter((s) => s.key !== key);
+
+    if (updatedList.length === currentSites.length) {
+      throw httpError(404, `Site ${key} não encontrado para exclusão.`);
+    }
+
+    saveSites(updatedList, dataDir);
+    res.json({ ok: true, removedKey: key, totalSites: updatedList.length });
+  }));
+
+  router.post('/sites-manage/test', route(async (req, res) => {
+    const data = req.body || {};
+    const key = String(data.key || '').trim().toLowerCase();
+    const currentSites = loadSites(readEnvFile() || {}, dataDir);
+    const existing = currentSites.find((s) => s.key === key);
+
+    const sftpPassword = data.sftp?.password && data.sftp.password !== '••••••••'
+      ? data.sftp.password
+      : existing?.sftp?.password || '';
+
+    const dbPassword = data.db?.password && data.db.password !== '••••••••'
+      ? data.db.password
+      : existing?.db?.password || '';
+
+    const testTarget = {
+      key: key || 'test',
+      name: data.name || 'Teste',
+      url: data.url || 'https://exemplo.com',
+      remoteRoot: data.remoteRoot || '/public_html',
+      sftp: {
+        host: data.sftp?.host || '',
+        port: Number(data.sftp?.port || 22),
+        username: data.sftp?.username || '',
+        password: sftpPassword,
+      },
+      db: {
+        enabled: Boolean(data.db?.enabled && data.db?.host),
+        host: data.db?.host || '',
+        port: Number(data.db?.port || 3306),
+        database: data.db?.database || '',
+        user: data.db?.user || '',
+        password: dbPassword,
+        prefix: data.db?.prefix || 'wp_',
+        ssl: Boolean(data.db?.ssl),
+      },
+    };
+
+    const [sftp, db, web] = await Promise.all([
+      testSftp(testTarget),
+      testMysql(testTarget),
+      testHttp(testTarget),
+    ]);
+
+    res.json({
+      testedAt: new Date().toISOString(),
+      sftp,
+      mysql: db,
+      http: web,
+      healthy: sftp.ok && (!testTarget.db.enabled || db.ok) && web.ok,
+    });
+  }));
+
   return router;
 
   function findSite(key) {
-    const site = loadSites(readEnvFile() || {}).find((s) => s.key === key);
+    const site = loadSites(readEnvFile() || {}, dataDir).find((s) => s.key === key);
     if (!site) throw httpError(404, `Site não encontrado: ${key}`);
     return site;
   }

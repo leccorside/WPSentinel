@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import { StatusBadge } from '../components/common/StatusBadge';
+import { SiteConfigModal } from '../components/common/SiteConfigModal';
 
 function formatDate(isoString) {
   if (!isoString) return '—';
@@ -52,6 +53,14 @@ export function SettingsView({
   const [resetConfirmationInput, setResetConfirmationInput] = useState('');
   const [resetError, setResetError] = useState('');
 
+  // Gestão Dinâmica de Sites Monitorados
+  const [managedSites, setManagedSites] = useState([]);
+  const [siteModalOpen, setSiteModalOpen] = useState(false);
+  const [selectedSiteForEdit, setSelectedSiteForEdit] = useState(null);
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [siteToDelete, setSiteToDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+
   // Carrega configurações reais do .env
   const loadSettings = async () => {
     setLoading(true);
@@ -65,9 +74,35 @@ export function SettingsView({
     }
   };
 
+  const loadManagedSites = async () => {
+    try {
+      const res = await api.sites.getManage();
+      setManagedSites(res.sites || []);
+    } catch (err) {
+      console.warn('Falha ao carregar sites configurados:', err.message);
+    }
+  };
+
   useEffect(() => {
     loadSettings();
+    loadManagedSites();
   }, []);
+
+  const handleDeleteSite = async () => {
+    if (!siteToDelete) return;
+    setDeleting(true);
+    try {
+      await api.sites.deleteManage(siteToDelete.key);
+      setToastMessage({ type: 'success', text: `Site ${siteToDelete.name} removido com sucesso.` });
+      setDeleteModalOpen(false);
+      setSiteToDelete(null);
+      loadManagedSites();
+    } catch (err) {
+      setToastMessage({ type: 'error', text: `Erro ao remover site: ${err.message}` });
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const handleSave = async (e) => {
     if (e) e.preventDefault();
@@ -655,105 +690,186 @@ export function SettingsView({
       {activeTab === 'connections' && (
         <div className="flex flex-col gap-6">
           <div className="bg-surface-container-low border border-outline-variant/30 rounded-xl p-6 lg:p-8 shadow-md flex flex-col gap-6">
-            <div className="flex items-center justify-between border-b border-outline-variant/20 pb-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-outline-variant/20 pb-4">
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 rounded-lg bg-tertiary-container/20 text-tertiary flex items-center justify-center">
                   <span className="material-symbols-outlined text-lg">cable</span>
                 </div>
                 <div>
                   <h2 className="font-headline font-bold text-base text-on-surface">
-                    Conexões dos Perímetros Monitorados
+                    Perímetros e Conexões Monitoradas
                   </h2>
                   <p className="font-sans text-xs text-on-surface-variant">
-                    Parâmetros SFTP e credenciais de banco (senhas mantidas estritamente no servidor).
+                    Configuração direta via painel (<code className="text-primary font-mono">.monitor-data/sites.json</code>). Sem necessidade de alterar o arquivo <code className="text-primary font-mono">.env</code>.
                   </p>
                 </div>
               </div>
-              <span className="font-mono text-xs text-outline">
-                {currentSites.length} Hosts Configurados
-              </span>
+              <div className="flex items-center gap-3">
+                <span className="font-mono text-xs text-outline">
+                  {(managedSites.length > 0 ? managedSites : currentSites).length} Sites Ativos
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedSiteForEdit(null);
+                    setSiteModalOpen(true);
+                  }}
+                  className="flex items-center gap-2 px-3.5 py-2 bg-primary hover:bg-primary-hover text-on-primary rounded-lg font-headline text-xs font-bold transition-all shadow-md shadow-primary/20 cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-sm">add</span>
+                  <span>Adicionar Novo Site</span>
+                </button>
+              </div>
             </div>
 
             <div className="flex flex-col gap-4">
-              {currentSites.map((site) => {
+              {(managedSites.length > 0 ? managedSites : currentSites).map((site) => {
                 const isTesting = testingSiteKey === site.key;
+                const sftpHost = site.sftp?.host || '—';
+                const sftpUser = site.sftp?.username || '—';
+                const dbEnabled = site.db?.enabled !== false && !!site.db?.host;
+                const dbHost = site.db?.host || '—';
+                const dbName = site.db?.database || '—';
+
                 return (
                   <div
                     key={site.key}
-                    className="p-5 rounded-xl bg-surface-container border border-outline-variant/20 flex flex-col gap-4"
+                    className="p-5 rounded-xl bg-surface-container border border-outline-variant/20 flex flex-col gap-4 hover:border-outline-variant/40 transition-colors"
                   >
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-outline-variant/10">
-                      <div className="flex items-center gap-3">
-                        <span className="w-2.5 h-2.5 rounded-full bg-secondary shadow-[0_0_8px_rgba(78,222,163,0.8)]" />
+                    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-3 border-b border-outline-variant/10">
+                      <div className="flex items-start gap-3">
+                        <span className="w-2.5 h-2.5 rounded-full bg-secondary shadow-[0_0_8px_rgba(78,222,163,0.8)] mt-1.5" />
                         <div>
-                          <h3 className="font-headline font-bold text-base text-on-surface">
-                            {site.name}
-                          </h3>
-                          <span className="font-mono text-xs text-outline">
-                            Chave: <code className="text-primary">{site.key}</code> • URL: {site.url}
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h3 className="font-headline font-bold text-base text-on-surface">
+                              {site.name}
+                            </h3>
+                            <span className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-surface-container-high text-primary border border-primary/20">
+                              {site.key}
+                            </span>
+                          </div>
+                          <span className="font-mono text-xs text-outline break-all">
+                            URL: <a href={site.url} target="_blank" rel="noreferrer" className="text-secondary hover:underline">{site.url}</a> • Raiz Remota: <code className="text-on-surface-variant font-mono">{site.remoteRoot || '/'}</code>
                           </span>
                         </div>
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={() => handleTestSite(site.key)}
-                        disabled={isTesting}
-                        className="flex items-center gap-1.5 px-3.5 py-1.5 bg-surface-container-high hover:bg-surface-bright text-on-surface rounded-lg font-headline text-xs font-semibold transition-colors cursor-pointer self-start sm:self-auto"
-                      >
-                        <span className={`material-symbols-outlined text-sm text-secondary ${isTesting ? 'animate-spin' : ''}`}>
-                          sync
-                        </span>
-                        <span>{isTesting ? 'Testando Conexões...' : 'Testar Conectividade'}</span>
-                      </button>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() => handleTestSite(site.key)}
+                          disabled={isTesting}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-container-high hover:bg-surface-bright text-on-surface rounded-lg font-headline text-xs font-semibold transition-colors cursor-pointer"
+                          title="Testar conectividade SFTP e MySQL ao vivo"
+                        >
+                          <span className={`material-symbols-outlined text-sm text-secondary ${isTesting ? 'animate-spin' : ''}`}>
+                            sync
+                          </span>
+                          <span>{isTesting ? 'Testando...' : 'Testar Conexão'}</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedSiteForEdit(site);
+                            setSiteModalOpen(true);
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-container-high hover:bg-surface-bright text-primary rounded-lg font-headline text-xs font-semibold transition-colors cursor-pointer"
+                          title="Editar parâmetros e credenciais deste site"
+                        >
+                          <span className="material-symbols-outlined text-sm">edit</span>
+                          <span>Editar</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSiteToDelete(site);
+                            setDeleteModalOpen(true);
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-error-container/20 hover:bg-error-container/40 text-error rounded-lg font-headline text-xs font-semibold transition-colors cursor-pointer"
+                          title="Remover este site das monitorias"
+                        >
+                          <span className="material-symbols-outlined text-sm">delete</span>
+                          <span>Excluir</span>
+                        </button>
+                      </div>
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                       {/* SFTP Box */}
-                      <div className="p-3 rounded-lg bg-surface-container-lowest border border-outline-variant/20 flex flex-col gap-1">
-                        <span className="font-mono text-[10px] uppercase text-outline font-semibold flex items-center gap-1">
+                      <div className="p-3.5 rounded-lg bg-surface-container-lowest border border-outline-variant/20 flex flex-col gap-1.5">
+                        <span className="font-mono text-[10px] uppercase text-outline font-semibold flex items-center gap-1.5">
                           <span className="material-symbols-outlined text-xs text-primary">dns</span>
-                          SFTP Endpoint
+                          Acesso SFTP / SSH
                         </span>
-                        <span className="font-mono text-xs text-on-surface font-semibold truncate">
-                          Porta 22 / SFTP
-                        </span>
-                        <span className="font-mono text-[11px] text-outline-variant truncate">
-                          Diretório remoto seguro
-                        </span>
+                        <div className="flex flex-col gap-0.5">
+                          <span className="font-mono text-xs text-on-surface font-semibold truncate">
+                            {sftpUser}@{sftpHost}:{site.sftp?.port || 22}
+                          </span>
+                          <span className="font-mono text-[11px] text-outline-variant flex items-center gap-1">
+                            <span className="material-symbols-outlined text-[12px] text-secondary">vpn_key</span>
+                            {site.hasPassword || site.sftp?.password ? 'Senha Gravada e Protegida' : 'Sem Senha'}
+                          </span>
+                        </div>
                       </div>
 
                       {/* MySQL Box */}
-                      <div className="p-3 rounded-lg bg-surface-container-lowest border border-outline-variant/20 flex flex-col gap-1">
-                        <span className="font-mono text-[10px] uppercase text-outline font-semibold flex items-center gap-1">
+                      <div className="p-3.5 rounded-lg bg-surface-container-lowest border border-outline-variant/20 flex flex-col gap-1.5">
+                        <span className="font-mono text-[10px] uppercase text-outline font-semibold flex items-center gap-1.5">
                           <span className="material-symbols-outlined text-xs text-secondary">database</span>
-                          Banco MySQL
+                          Banco de Dados MySQL
                         </span>
-                        <span className="font-mono text-xs text-secondary font-semibold">
-                          Conexão Somente-Leitura
-                        </span>
-                        <span className="font-mono text-[11px] text-outline-variant">
-                          Pool Seguro mTLS Ativo
-                        </span>
+                        {dbEnabled ? (
+                          <div className="flex flex-col gap-0.5">
+                            <span className="font-mono text-xs text-secondary font-semibold truncate">
+                              {dbName} ({dbHost}:{site.db?.port || 3306})
+                            </span>
+                            <span className="font-mono text-[11px] text-outline-variant">
+                              Usuário: <code className="text-on-surface">{site.db?.user || '—'}</code> • Prefixo: <code className="text-on-surface">{site.db?.prefix || 'wp_'}</code>
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col gap-0.5">
+                            <span className="font-mono text-xs text-outline font-semibold">
+                              Auditoria SQL Desativada
+                            </span>
+                            <span className="font-mono text-[11px] text-outline-variant">
+                              Apenas monitoramento de arquivos ativo
+                            </span>
+                          </div>
+                        )}
                       </div>
 
-                      {/* HTTP/SSL Box */}
-                      <div className="p-3 rounded-lg bg-surface-container-lowest border border-outline-variant/20 flex flex-col gap-1">
-                        <span className="font-mono text-[10px] uppercase text-outline font-semibold flex items-center gap-1">
-                          <span className="material-symbols-outlined text-xs text-tertiary">lock</span>
-                          Certificado SSL
+                      {/* Configuração Local Box */}
+                      <div className="p-3.5 rounded-lg bg-surface-container-lowest border border-outline-variant/20 flex flex-col gap-1.5">
+                        <span className="font-mono text-[10px] uppercase text-outline font-semibold flex items-center gap-1.5">
+                          <span className="material-symbols-outlined text-xs text-tertiary">tune</span>
+                          Armazenamento e Período
                         </span>
-                        <span className="font-mono text-xs text-on-surface font-semibold">
-                          Let's Encrypt Authority
-                        </span>
-                        <span className="font-mono text-[11px] text-secondary">
-                          HTTPS 100% Homologado
-                        </span>
+                        <div className="flex flex-col gap-0.5">
+                          <span className="font-mono text-xs text-on-surface font-semibold truncate">
+                            .monitor-data/sites.json
+                          </span>
+                          <span className="font-mono text-[11px] text-secondary">
+                            Spam Since: {site.spamContentSince || 'Padrão (1970)'}
+                          </span>
+                        </div>
                       </div>
                     </div>
                   </div>
                 );
               })}
+
+              {(managedSites.length === 0 && currentSites.length === 0) && (
+                <div className="p-8 text-center bg-surface-container rounded-xl border border-dashed border-outline-variant/40 flex flex-col items-center gap-3">
+                  <span className="material-symbols-outlined text-3xl text-outline">dns</span>
+                  <span className="font-headline font-semibold text-sm text-on-surface">Nenhum site configurado</span>
+                  <p className="font-sans text-xs text-on-surface-variant max-w-md">
+                    Clique no botão acima para adicionar o seu primeiro perímetro monitorado diretamente pelo painel.
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -996,6 +1112,69 @@ export function SettingsView({
                 }`}
               >
                 Confirmar Redefinição
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* MODAL: CADASTRO E EDIÇÃO DE SITES VIA TELA               */}
+      {/* ======================================================== */}
+      <SiteConfigModal
+        isOpen={siteModalOpen}
+        site={selectedSiteForEdit}
+        onClose={() => {
+          setSiteModalOpen(false);
+          setSelectedSiteForEdit(null);
+        }}
+        onSaved={() => {
+          loadManagedSites();
+        }}
+      />
+
+      {/* ======================================================== */}
+      {/* MODAL: CONFIRMAÇÃO DE EXCLUSÃO DE SITE                   */}
+      {/* ======================================================== */}
+      {deleteModalOpen && siteToDelete && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-surface-container-low border border-error/50 rounded-xl w-full max-w-md p-6 shadow-2xl flex flex-col gap-4">
+            <div className="flex items-center gap-3 border-b border-outline-variant/20 pb-3 text-error">
+              <span className="material-symbols-outlined text-2xl">delete_forever</span>
+              <h3 className="font-headline font-bold text-base text-on-surface">
+                Excluir Site Monitorado
+              </h3>
+            </div>
+
+            <p className="font-sans text-xs text-on-surface-variant leading-relaxed">
+              Tem certeza de que deseja remover permanentemente o perímetro <strong className="text-on-surface">{siteToDelete.name}</strong> (<code className="text-primary font-mono">{siteToDelete.key}</code>) do sistema de monitoramento?
+            </p>
+
+            <div className="p-3 bg-error-container/10 border border-error/20 rounded-lg text-[11px] text-error font-mono">
+              Esta ação remove o registro do arquivo de configuração <code className="font-bold">sites.json</code>. O monitor não executará mais varreduras neste host.
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-outline-variant/20">
+              <button
+                type="button"
+                onClick={() => {
+                  setDeleteModalOpen(false);
+                  setSiteToDelete(null);
+                }}
+                disabled={deleting}
+                className="px-4 py-2 bg-surface-container hover:bg-surface-container-high text-on-surface rounded-lg font-headline text-xs font-semibold cursor-pointer"
+              >
+                Cancelar
+              </button>
+
+              <button
+                type="button"
+                onClick={handleDeleteSite}
+                disabled={deleting}
+                className="px-4 py-2 bg-error text-on-error hover:bg-error-container rounded-lg font-headline text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
+              >
+                {deleting && <span className="material-symbols-outlined text-xs animate-spin">sync</span>}
+                <span>{deleting ? 'Removendo...' : 'Sim, Excluir'}</span>
               </button>
             </div>
           </div>

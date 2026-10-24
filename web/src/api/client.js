@@ -76,6 +76,10 @@ export const api = {
   sites: {
     sessions: (siteKey) => request(`/api/sites/${encodeURIComponent(siteKey)}/sessions`),
     test: (siteKey) => request(`/api/sites/${encodeURIComponent(siteKey)}/test`, { method: 'POST' }),
+    getManage: () => request('/api/sites-manage'),
+    saveManage: (data) => request('/api/sites-manage', { method: 'POST', body: JSON.stringify(data) }),
+    deleteManage: (key) => request(`/api/sites-manage/${encodeURIComponent(key)}`, { method: 'DELETE' }),
+    testManage: (data) => request('/api/sites-manage/test', { method: 'POST', body: JSON.stringify(data) }),
   },
   settings: {
     get: () => request('/api/settings'),

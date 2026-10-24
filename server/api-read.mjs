@@ -178,7 +178,7 @@ export function createReadRouter({ paths, getRuntime = () => ({ monitor: { state
   return router;
 
   function sites(env = readEnvFile() || {}) {
-    return loadSites(env);
+    return loadSites(env, dataDir);
   }
 
   function requireSite(key) {
