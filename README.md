@@ -86,13 +86,172 @@ da lista. A primeira varredura de um site novo salva o estado atual como referê
   baixa todos os arquivos.
 - `MAX_DOWNLOAD_BYTES` (padrão 8 MiB): arquivos maiores não são baixados para hash nem inspeção.
 
-## Painel web (Docker) — em construção
+## Painel web (Docker)
 
-O painel React está sendo construído em etapas (ver `PASSOS.md`). Para subir o que já existe:
-`docker compose up -d --build` e abrir <http://127.0.0.1:8787> (o `.env` precisa existir antes). Status em
-`docker compose ps`, logs em `docker compose logs -f` e para parar `docker compose down`. Os dados continuam em
-`.monitor-data/` e `reports/` (montados no container), então os `.cmd` e o painel enxergam o mesmo histórico, mas
-não rode os dois ao mesmo tempo.
+O painel web React SPA do **WP Sentinel** roda inteiramente empacotado em container Docker com arquitetura multi-stage (Node.js 22 e dist estático otimizado). Ele compartilha exatamente o mesmo motor CLI e os mesmos diretórios de dados locais.
+
+### Comandos básicos do container
+
+```bash
+# Subir o painel em segundo plano compilando as atualizações
+docker compose up -d --build
+
+# Acompanhar logs em tempo real (servidor, varreduras e daemon)
+docker compose logs -f
+
+# Verificar status e integridade do container
+docker compose ps
+
+# Parar o painel preservando volumes e histórico
+docker compose down
+```
+
+O painel estará disponível em: **<http://127.0.0.1:8787>** (ou na porta configurada em `PANEL_PORT`).
+
+### Volumes e persistência
+
+O `docker-compose.yml` mapeia três volumes fundamentais do host para dentro do container:
+- `./.env:/app/.env`: Arquivo de credenciais e perâmetros dos sites monitorados (deve existir antes de subir o container).
+- `${DATA_DIR:-./.monitor-data}:/app/.monitor-data`: Histórico de integridade, baseline confiável (`trusted-baseline.json`), estado atual (`state.json`), feed de alertas (`alerts.jsonl`), backups da limpeza (`backups/`) e estado de leitura de notificações (`panel-notifications.json`).
+- `${REPORTS_DIR:-./reports}:/app/reports`: Relatórios técnicos diários em formato TXT e resumos executivos.
+
+> [!NOTE]
+> Como os diretórios de dados são compartilhados, os scripts de linha de comando (`run-scan.cmd`, `run-monitor.cmd`, `run-cleanup.cmd`) e o painel web operam sobre a mesma base. Não execute o monitor contínuo na CLI local enquanto o container estiver executando o monitor no painel.
+
+### Modelo de segurança do painel
+
+- **Acesso local (Loopback):** Por padrão, `PANEL_HOST=127.0.0.1`. O painel só aceita conexões da própria máquina e não exige autenticação por senha.
+- **Acesso externo (VPS ou Rede):** Se `PANEL_HOST` for alterado para qualquer endereço fora do loopback (ex.: `0.0.0.0`), o servidor ativa uma **trava de segurança rigorosa**: ele se recusa a iniciar se `PANEL_PASSWORD` não estiver preenchida no `.env`. Toda requisição exigirá autenticação com cookies HTTP-Only seguros, HMAC assinado e rate limiting contra força bruta.
+
+---
+
+## Deploy em VPS (Guia de Produção)
+
+O WP Sentinel foi concebido para funcionar tanto no ambiente local quanto em servidores dedicados ou VPS Linux (Ubuntu 22.04/24.04 LTS ou Debian 12), em arquiteturas `x86_64` (amd64) ou `arm64`. O deploy em produção fica a seu critério quando decidir migrar o monitoramento para uma nuvem 24/7.
+
+### 1. Preparação da VPS Linux
+
+Instale o Docker e o Docker Compose plugin oficial no servidor:
+
+```bash
+# Atualizar repositórios e instalar pacotes base
+sudo apt-get update && sudo apt-get install -y ca-certificates curl gnupg ufw
+
+# Adicionar repositório oficial do Docker
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+# Instalar Docker Engine e Compose
+sudo apt-get update && sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+```
+
+### 2. Cópia do projeto e dados
+
+Clone o repositório ou envie os arquivos para a VPS (ex.: em `/opt/wp-sentinel`):
+
+```bash
+# Exemplo via rsync ou git
+mkdir -p /opt/wp-sentinel
+cd /opt/wp-sentinel
+git clone <URL_DO_REPOSITORIO> .
+```
+
+Copie com segurança o seu arquivo `.env` de produção e a pasta de histórico `.monitor-data/` existente:
+
+```bash
+# Garanta permissões adequadas
+chmod 600 .env
+chmod -R 700 .monitor-data
+```
+
+### 3. Configuração de ambiente (`.env`) na VPS
+
+No `.env` da VPS, configure:
+
+```env
+# Exposição via Docker para proxy reverso
+PANEL_HOST=0.0.0.0
+PANEL_PORT=8787
+
+# OBRIGATÓRIO fora do loopback: senha forte para login no painel
+PANEL_PASSWORD=Defina_Aqui_Uma_Senha_Extremamente_Forte_E_Longa
+
+# Iniciar o monitoramento contínuo automaticamente ao ligar o container
+MONITOR_AUTOSTART=true
+```
+
+### 4. Reverse Proxy com HTTPS Automático (Caddy)
+
+Recomenda-se colocar o **Caddy** na frente do WP Sentinel para obter certificados SSL/TLS automáticos (Let's Encrypt / ZeroSSL) e suporte nativo a WebSockets e Server-Sent Events (SSE).
+
+Instale o Caddy (`sudo apt install -y caddy`) e configure `/etc/caddy/Caddyfile`:
+
+```caddy
+sentinel.seudominio.com.br {
+    # Redireciona tráfego para o container na porta 8787
+    reverse_proxy 127.0.0.1:8787 {
+        # Configurações para streaming de SSE em tempo real sem buffer
+        flush_interval -1
+    }
+
+    # Cabeçalhos de segurança HTTP recomendados
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+}
+```
+
+Recarregue o Caddy:
+```bash
+sudo systemctl reload caddy
+```
+
+### 5. Configuração do Firewall (UFW)
+
+Isole a VPS permitindo conexões externas apenas em portas estritamente necessárias:
+
+```bash
+# Permitir SSH, HTTP e HTTPS
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+sudo ufw allow 22/tcp comment 'SSH'
+sudo ufw allow 80/tcp comment 'HTTP (Caddy LetEncrypt)'
+sudo ufw allow 443/tcp comment 'HTTPS (Caddy)'
+
+# Ativar firewall (a porta 8787 do Sentinel fica protegida pelo Caddy e pelo localhost)
+sudo ufw enable
+```
+
+### 6. Liberação do IP da VPS no "MySQL Remoto" do cPanel
+
+Como os bancos de dados dos sites WordPress monitorados são consultados via porta 3306 remota:
+1. Acesse o **cPanel** de cada hospedagem WordPress.
+2. Navegue até a seção **Bancos de Dados** → **MySQL Remoto** (*Remote MySQL*).
+3. Adicione o **endereço IPv4 público fixo da sua VPS** na lista de hosts autorizados.
+4. *Sem essa autorização, o MySQL retornará erro de handshake `ER_ACCESS_DENIED_ERROR` (1045).*
+
+### 7. Backup e Atualização Contínua na VPS
+
+Para atualizar o sistema com novas versões no futuro:
+
+```bash
+cd /opt/wp-sentinel
+git pull
+docker compose up -d --build
+```
+
+Rotina diária recomendada de backup dos dados na VPS (crontab):
+```bash
+# Backup diário de .monitor-data e reports
+0 3 * * * tar -czf /var/backups/sentinel-backup-$(date +\%F).tar.gz -C /opt/wp-sentinel .monitor-data reports
+```
+
+---
 
 ## Limpeza assistida
 

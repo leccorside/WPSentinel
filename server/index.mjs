@@ -11,6 +11,7 @@ import { createNotificationManager } from './notifications.mjs';
 import { createOrchestrator } from './orchestrator.mjs';
 import { createOrchestratorRouter } from './api-orchestrator.mjs';
 import { createReadRouter } from './api-read.mjs';
+import { loadSites } from '../src/config.mjs';
 import { ENV_FILE, ROOT_DIR, WEB_DIR, isLoopback, panelSettings, readEnvFile } from './config.mjs';
 
 const startedAt = new Date();
