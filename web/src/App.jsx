@@ -297,7 +297,12 @@ export default function App() {
             />
           )}
 
-          {activeView === 'reports' && <ReportsView />}
+          {activeView === 'reports' && (
+            <ReportsView
+              sites={sitesList}
+              overviewData={overview}
+            />
+          )}
 
           {activeView === 'settings' && (
             <SettingsView
