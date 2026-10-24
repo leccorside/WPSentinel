@@ -2,16 +2,14 @@
 
 import 'dotenv/config';
 import crypto from 'node:crypto';
-import dns from 'node:dns/promises';
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import SftpClient from 'ssh2-sftp-client';
 import mysql from 'mysql2/promise';
-import { unserialize } from 'php-serialize';
 import { findHiddenBlocks, scanElementorData } from './hidden-links.mjs';
+import { lookupServerIps, parseSessions, suspiciousReasons } from './sessions.mjs';
 import { MARKER_DIRS, isMalwareMarker } from './malware-markers.mjs';
 import { assertSftp, loadSites, sftpKey } from './config.mjs';
 import { classifyPhp, isCacheRootPhp, isDropin } from './dropins.mjs';
@@ -27,6 +25,8 @@ const REPORTS_DIR = path.join(ROOT_DIR, 'reports');
 
 const ONCE = process.argv.includes('--once');
 const RESET_BASELINE = process.argv.includes('--reset-baseline');
+// Força o hash completo em todos os ciclos desta execução (botão "Revalidar Hashes" do painel).
+const FORCE_FULL_HASH = process.argv.includes('--full-hash');
 const INTERVAL_MS = Math.max(30, Number(process.env.INTERVAL_SECONDS || 300)) * 1000;
 const FULL_HASH_EVERY = Math.max(1, Number(process.env.FULL_HASH_EVERY || 24));
 const MAX_DOWNLOAD_BYTES = Math.max(1024, Number(process.env.MAX_DOWNLOAD_BYTES || 8 * 1024 * 1024));
@@ -122,10 +122,10 @@ async function runCycle() {
 
   // Cada site é verificado de forma isolada (ver o laço abaixo).
   const scanSite = async (site) => {
-    console.log(`\n${site.name}: inventariando arquivos...`);
-    const sftp = await sftpFor(site);
     const previous = state.sites?.[site.key] || { files: {}, users: [] };
-    const forceFullHash = !state.sites?.[site.key] || cycle % FULL_HASH_EVERY === 0;
+    const forceFullHash = FORCE_FULL_HASH || !state.sites?.[site.key] || cycle % FULL_HASH_EVERY === 0;
+    console.log(`\n${site.name}: inventariando arquivos${forceFullHash ? ' (hash completo)' : ''}...`);
+    const sftp = await sftpFor(site);
     const inventory = await listTree(sftp, site.remoteRoot);
     const remoteFiles = inventory.files;
     await addPinnedFiles(sftp, site.remoteRoot, remoteFiles);
@@ -599,13 +599,10 @@ async function inspectDatabase(site, previousSiteState) {
     );
     const loginById = new Map(normalizedUsers.map((user) => [user.id, user.login]));
     const sessions = parseSessions(sessionRows, loginById);
-    // Sessões abertas pelo próprio servidor ou por "navegador" WordPress foram a assinatura do malware em 05/10/2026.
     const serverIps = await resolveServerIps(site);
     const previousSessionIds = previousSnapshot?.sessionIds ? new Set(previousSnapshot.sessionIds) : null;
     for (const session of sessions) {
-      const reasons = [];
-      if (serverIps.has(session.ip)) reasons.push('IP do próprio servidor');
-      if (!session.ua || /^WordPress\//i.test(session.ua)) reasons.push('navegador WordPress ou vazio');
+      const reasons = suspiciousReasons(session, serverIps);
       if (reasons.length) {
         if (!previousSessionIds?.has(session.id)) {
           findings.push({ severity: 'critical', message: 'Sessão de login suspeita', details: { ...session, reasons } });
@@ -638,43 +635,9 @@ async function inspectDatabase(site, previousSiteState) {
   }
 }
 
-function parseSessions(rows, loginById) {
-  const sessions = [];
-  for (const row of rows) {
-    let tokens;
-    try { tokens = unserialize(String(row.meta_value || '')); } catch { tokens = null; }
-    if (!tokens || typeof tokens !== 'object') continue;
-    for (const [verifier, token] of Object.entries(tokens)) {
-      const userId = String(row.user_id);
-      sessions.push({
-        // O verificador já é um hash do token; guardamos só um hash dele no estado.
-        id: sha256(`${userId}:${verifier}`).slice(0, 32),
-        userId,
-        login: loginById.get(userId) || null,
-        ip: String(token?.ip || ''),
-        ua: String(token?.ua || ''),
-        loginAt: token?.login ? new Date(Number(token.login) * 1000).toISOString() : null,
-        expiresAt: token?.expiration ? new Date(Number(token.expiration) * 1000).toISOString() : null,
-      });
-    }
-  }
-  return sessions;
-}
-
 async function resolveServerIps(site) {
-  if (serverIpCache.has(site.key)) return serverIpCache.get(site.key);
-  const ips = new Set((process.env.SERVER_IPS || '').split(',').map((ip) => ip.trim()).filter(Boolean));
-  for (const host of [new URL(site.url).hostname, site.sftp.host, site.db.host]) {
-    if (!host) continue;
-    if (net.isIP(host)) { ips.add(host); continue; }
-    try {
-      for (const { address } of await dns.lookup(host, { all: true })) ips.add(address);
-    } catch {
-      // Sem DNS, vale o que estiver em SERVER_IPS e nos hosts informados como IP.
-    }
-  }
-  serverIpCache.set(site.key, ips);
-  return ips;
+  if (!serverIpCache.has(site.key)) serverIpCache.set(site.key, await lookupServerIps(site, process.env.SERVER_IPS));
+  return serverIpCache.get(site.key);
 }
 
 function extractCronHooks(serializedCron) {

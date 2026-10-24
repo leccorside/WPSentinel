@@ -81,6 +81,9 @@ da lista. A primeira varredura de um site novo salva o estado atual como referê
   varreduras do `run-scan.cmd`) levam mais que o dobro do tempo, e o console fica minutos parado em
   "inventariando arquivos..." no site maior. Isso é esperado, não é travamento. O primeiro ciclo de um site
   novo também faz hash completo.
+- `npm run scan:full` faz uma varredura única forçando o hash completo, fora do calendário de
+  `FULL_HASH_EVERY`. O console mostra "(hash completo)" ao lado de "inventariando arquivos..." quando o ciclo
+  baixa todos os arquivos.
 - `MAX_DOWNLOAD_BYTES` (padrão 8 MiB): arquivos maiores não são baixados para hash nem inspeção.
 
 ## Limpeza assistida

@@ -10,12 +10,12 @@
 // <P>_SPAM_SINCE_POST / <P>_SPAM_SINCE_PAGE   opcionais: datas (AAAA-MM-DD) a partir das quais posts/páginas
 //                                              são spam e podem ser apagados pela limpeza
 
-const env = (name) => {
-  const value = process.env[name];
-  return value === undefined || value === '' ? undefined : value;
-};
-
-export function loadSites() {
+// `source` permite ler as variáveis de outro objeto (o painel lê o .env atualizado sem mexer em process.env).
+export function loadSites(source = process.env) {
+  const env = (name) => {
+    const value = source[name];
+    return value === undefined || value === '' ? undefined : value;
+  };
   const prefixes = (env('SITES') || '').split(',').map((p) => p.trim().toUpperCase()).filter(Boolean);
   if (!prefixes.length) throw new Error('Defina SITES no .env (ex.: SITES=MEUSITE,OUTRO). Veja o .env.example.');
   // O prefixo vira parte do nome das variáveis: só letras, números e _ (nomes com - ou espaço são fáceis de errar).

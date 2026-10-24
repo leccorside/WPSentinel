@@ -6,6 +6,7 @@
   "description": "Agentless security monitor for WordPress sites: detects malware, hidden SEO spam and suspicious logins over SFTP and MySQL, with guided cleanup and daily reports.",
   "scripts": {
     "scan": "node src/monitor.mjs --once",
+    "scan:full": "node src/monitor.mjs --once --full-hash",
     "monitor": "node src/monitor.mjs",
     "plan": "node src/clean.mjs --plan",
     "clean": "node src/clean.mjs",
