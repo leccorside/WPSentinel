@@ -4,6 +4,7 @@ import path from 'node:path';
 import express from 'express';
 import { loadSites } from '../src/config.mjs';
 import { readEnvFile } from './config.mjs';
+import { makeItemKey } from './api-features.mjs';
 import {
   FILE_STATUSES, REPORT_NAME, compareFiles, countByStatus, isPendingAlert, listBackups, listReports, parseReport,
   readAlerts, readBaseline, readPlan, readState, summarizeSite,
@@ -126,10 +127,27 @@ export function createReadRouter({ paths, getRuntime = () => ({ monitor: { state
   router.get('/plan', route(async (req, res) => {
     const { value: plan, modifiedAt } = await readPlan(dataDir);
     if (!plan) return res.json({ plan: null });
+    let reviewedMap = {};
+    try {
+      reviewedMap = JSON.parse(await fs.readFile(path.join(dataDir, 'reviewed-items.json'), 'utf8'));
+    } catch {}
+    const manualReview = (plan.manualReview || []).map((item) => {
+      const key = makeItemKey(item);
+      return { ...item, key, reviewed: Boolean(reviewedMap[key]) };
+    });
     const actions = [...(plan.fileActions || []), ...(plan.databaseActions || [])];
     const byType = {};
     for (const action of actions) byType[action.type] = (byType[action.type] || 0) + 1;
-    res.json({ plan, savedAt: modifiedAt, summary: { actions: actions.length, manualReview: (plan.manualReview || []).length, byType } });
+    res.json({
+      plan: { ...plan, manualReview },
+      savedAt: modifiedAt,
+      summary: {
+        actions: actions.length,
+        manualReview: manualReview.length,
+        reviewedManualReview: manualReview.filter((m) => m.reviewed).length,
+        byType,
+      },
+    });
   }));
 
   router.get('/backups', route(async (req, res) => {

@@ -6,6 +6,7 @@ import path from 'node:path';
 import process from 'node:process';
 import express from 'express';
 import { createAuthManager } from './auth.mjs';
+import { createFeaturesRouter } from './api-features.mjs';
 import { createOrchestrator } from './orchestrator.mjs';
 import { createOrchestratorRouter } from './api-orchestrator.mjs';
 import { createReadRouter } from './api-read.mjs';
@@ -41,6 +42,7 @@ app.get('/api/health', async (req, res) => {
 });
 
 app.use('/api/auth', auth.authRouter);
+app.use('/api', createFeaturesRouter({ paths: settings.paths }));
 app.use('/api', createOrchestratorRouter({ orchestrator }));
 app.use('/api', createReadRouter({ paths: settings.paths, getRuntime: orchestrator.getRuntime }));
 app.use('/api', (req, res) => res.status(404).json({ error: 'Rota não encontrada' }));
