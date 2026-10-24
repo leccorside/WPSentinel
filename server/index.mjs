@@ -6,6 +6,7 @@ import path from 'node:path';
 import process from 'node:process';
 import express from 'express';
 import { loadSites } from '../src/config.mjs';
+import { createReadRouter } from './api-read.mjs';
 import { ENV_FILE, WEB_DIR, isLoopback, panelSettings, readEnvFile } from './config.mjs';
 
 const startedAt = new Date();
@@ -32,6 +33,7 @@ app.get('/api/health', async (req, res) => {
   });
 });
 
+app.use('/api', createReadRouter({ paths: settings.paths }));
 app.use('/api', (req, res) => res.status(404).json({ error: 'Rota não encontrada' }));
 
 // Front (SPA): arquivos estáticos e index.html para qualquer outra rota.
