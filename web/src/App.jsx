@@ -264,11 +264,13 @@ export default function App() {
           {activeView === 'overview' && (
             <OverviewView
               overviewData={overview}
+              statusData={status}
               selectedSite={selectedSite}
+              onSelectSite={setSelectedSite}
               onTriggerScan={() => triggerJob('scan')}
               onTriggerFullScan={() => triggerJob('scan_full')}
               onOpenCleanup={() => setActiveView('cleanup')}
-              onSelectSite={setSelectedSite}
+              onTriggerMonitor={triggerMonitor}
             />
           )}
 
