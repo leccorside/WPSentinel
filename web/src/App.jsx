@@ -309,6 +309,9 @@ export default function App() {
               monitorState={status?.monitor?.state || 'stopped'}
               onTriggerMonitor={triggerMonitor}
               onTriggerResetBaseline={() => triggerJob('reset_baseline')}
+              overviewData={overview}
+              statusData={status}
+              sites={sitesList}
             />
           )}
         </main>
