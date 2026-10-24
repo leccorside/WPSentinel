@@ -292,6 +292,8 @@ export default function App() {
               onTriggerPlan={() => triggerJob('plan')}
               onExecuteClean={() => triggerJob('clean')}
               isExecuting={currentJob?.status === 'running'}
+              onOpenTerminal={() => setIsTerminalOpen(true)}
+              onReloadPlan={loadData}
             />
           )}
 
