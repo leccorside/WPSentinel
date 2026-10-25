@@ -55,6 +55,21 @@ export function Sidebar({
         </div>
 
         <div className="flex flex-col gap-1 px-3">
+          <button
+            type="button"
+            onClick={() => onSelectSite('all')}
+            className={`flex items-center justify-between px-3 py-2 rounded text-xs transition-colors text-left ${
+              selectedSite === 'all'
+                ? 'bg-surface-container-high border border-primary/30 text-on-surface'
+                : 'bg-surface-container-low hover:bg-surface-container text-on-surface-variant hover:text-on-surface'
+            }`}
+          >
+            <div className="flex items-center gap-2 truncate">
+              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${selectedSite === 'all' ? 'bg-primary shadow-[0_0_6px_rgba(77,142,255,0.8)]' : 'bg-outline-variant'}`} />
+              <span className="font-mono text-[11px] font-semibold truncate">Todos os Sites ({sites.length})</span>
+            </div>
+            <span className="font-mono text-[10px] text-primary shrink-0 ml-1">SOMA</span>
+          </button>
           {sites.map((site) => {
             const isSiteSelected = selectedSite === site.key;
             return (

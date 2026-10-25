@@ -33,67 +33,73 @@ export function createFeaturesRouter({ paths }) {
 
   const route = (handler) => (req, res, next) => Promise.resolve(handler(req, res)).catch(next);
 
-  // 1. Sessões de login ao vivo por site
+  // 1. Sessões de login ao vivo por site (ou todos os sites)
   router.get('/sites/:key/sessions', route(async (req, res) => {
-    const site = findSite(req.params.key);
-    if (!site.db.enabled) {
-      return res.json({
-        site: site.key,
-        siteName: site.name,
-        dbEnabled: false,
-        total: 0,
-        suspiciousCount: 0,
-        sessions: [],
-      });
+    const isAll = req.params.key === 'all';
+    const allSites = loadSites(readEnvFile() || {}, dataDir);
+    const targetSites = isAll ? allSites : [findSite(req.params.key)];
+
+    let allSessions = [];
+    let allServerIps = new Set();
+    const env = readEnvFile() || {};
+
+    for (const site of targetSites) {
+      if (!site.db?.enabled || !site.db?.host) continue;
+
+      let connection;
+      try {
+        connection = await mysql.createConnection({
+          host: site.db.host,
+          port: site.db.port,
+          database: site.db.database,
+          user: site.db.user,
+          password: site.db.password,
+          connectTimeout: 10000,
+          ssl: site.db.ssl ? {} : undefined,
+        });
+
+        const prefix = site.db.prefix || 'wp_';
+        const [users] = await connection.query(`SELECT ID, user_login FROM \`${prefix}users\``);
+        const loginById = new Map(users.map((u) => [String(u.ID), u.user_login]));
+
+        const [sessionRows] = await connection.query(
+          `SELECT user_id, meta_value FROM \`${prefix}usermeta\` WHERE meta_key = 'session_tokens'`,
+        );
+
+        const serverIps = await lookupServerIps(site, env.SERVER_IPS);
+        for (const ip of serverIps) allServerIps.add(ip);
+
+        const parsed = parseSessions(sessionRows, loginById);
+        const mapped = parsed.map((session) => {
+          const reasons = suspiciousReasons(session, serverIps);
+          return {
+            ...session,
+            siteKey: site.key,
+            siteName: site.name,
+            suspicious: reasons.length > 0,
+            reasons,
+          };
+        });
+
+        allSessions = allSessions.concat(mapped);
+      } catch (error) {
+        if (!isAll) {
+          throw httpError(500, `Falha ao consultar banco do site ${site.name}: ${error.code || error.message}`);
+        }
+      } finally {
+        await connection?.end().catch(() => {});
+      }
     }
 
-    let connection;
-    try {
-      connection = await mysql.createConnection({
-        host: site.db.host,
-        port: site.db.port,
-        database: site.db.database,
-        user: site.db.user,
-        password: site.db.password,
-        connectTimeout: 10000,
-        ssl: site.db.ssl ? {} : undefined,
-      });
-
-      const prefix = site.db.prefix || 'wp_';
-      const [users] = await connection.query(`SELECT ID, user_login FROM \`${prefix}users\``);
-      const loginById = new Map(users.map((u) => [String(u.ID), u.user_login]));
-
-      const [sessionRows] = await connection.query(
-        `SELECT user_id, meta_value FROM \`${prefix}usermeta\` WHERE meta_key = 'session_tokens'`,
-      );
-
-      const env = readEnvFile() || {};
-      const serverIps = await lookupServerIps(site, env.SERVER_IPS);
-      const parsed = parseSessions(sessionRows, loginById);
-
-      const sessions = parsed.map((session) => {
-        const reasons = suspiciousReasons(session, serverIps);
-        return {
-          ...session,
-          suspicious: reasons.length > 0,
-          reasons,
-        };
-      });
-
-      res.json({
-        site: site.key,
-        siteName: site.name,
-        checkedAt: new Date().toISOString(),
-        total: sessions.length,
-        suspiciousCount: sessions.filter((s) => s.suspicious).length,
-        serverIps: Array.from(serverIps),
-        sessions,
-      });
-    } catch (error) {
-      throw httpError(500, `Falha ao consultar banco do site ${site.name}: ${error.code || error.message}`);
-    } finally {
-      await connection?.end().catch(() => {});
-    }
+    res.json({
+      site: isAll ? 'all' : targetSites[0].key,
+      siteName: isAll ? `Todos os Sites (${targetSites.length})` : targetSites[0].name,
+      checkedAt: new Date().toISOString(),
+      total: allSessions.length,
+      suspiciousCount: allSessions.filter((s) => s.suspicious).length,
+      serverIps: Array.from(allServerIps),
+      sessions: allSessions,
+    });
   }));
 
   // 2. Teste de conectividade por site (SFTP, MySQL, HTTP/SSL)

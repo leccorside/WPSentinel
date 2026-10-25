@@ -68,22 +68,22 @@ export function ScannerView({
 }) {
   const [activeTab, setActiveTab] = useState('files');
 
-  // Define o site ativo para inspeção detalhada
-  const firstSiteKey = sites[0]?.key || 'adguarda';
-  const [internalSiteKey, setInternalSiteKey] = useState(
-    selectedSite !== 'all' ? selectedSite : firstSiteKey
-  );
+  // Define o site ativo para inspeção detalhada ('all' ou chave de site específico)
+  const [internalSiteKey, setInternalSiteKey] = useState(selectedSite || 'all');
 
   // Sincroniza quando selectedSite muda externamente
   useEffect(() => {
-    if (selectedSite !== 'all') {
-      setInternalSiteKey(selectedSite);
-    }
+    setInternalSiteKey(selectedSite || 'all');
   }, [selectedSite]);
 
-  const activeSiteKey = selectedSite !== 'all' ? selectedSite : internalSiteKey;
-  const currentSiteObj = sites.find((s) => s.key === activeSiteKey) || { key: activeSiteKey, name: activeSiteKey };
-  const currentSiteSummary = overviewData?.sites?.find((s) => s.key === activeSiteKey) || null;
+  const activeSiteKey = internalSiteKey;
+  const isAllSites = activeSiteKey === 'all';
+  const currentSiteObj = isAllSites
+    ? { key: 'all', name: `Todos os Sites (${sites.length})` }
+    : sites.find((s) => s.key === activeSiteKey) || { key: activeSiteKey, name: activeSiteKey };
+  const currentSiteSummary = !isAllSites
+    ? overviewData?.sites?.find((s) => s.key === activeSiteKey) || null
+    : null;
 
   // ==========================================
   // ESTADOS DA ABA 1: INTEGRIDADE DE ARQUIVOS
@@ -320,11 +320,19 @@ defined('ABSPATH') || exit;
     }
   }, [activeSiteKey, activeTab]);
 
-  // Métricas do Topo
-  const totalMonitoredFiles = currentSiteSummary?.files?.monitored || filesTotal || overviewData?.totals?.filesMonitored || 0;
-  const sessionsCount = sessionsData?.total ?? (currentSiteSummary?.database?.sessions || 0);
-  const suspiciousSessionsCount = sessionsData?.suspiciousCount ?? 0;
+  // Métricas do Topo (Consolidada se isAllSites, ou específica por site)
+  const allSitesTotalFiles = overviewData?.totals?.filesMonitored || sites.reduce((sum, s) => sum + (s.files?.monitored || 0), 0);
+  const totalMonitoredFiles = isAllSites
+    ? (allSitesTotalFiles || filesTotal || 0)
+    : (currentSiteSummary?.files?.monitored || filesTotal || 0);
+
+  const allSitesSessions = overviewData?.totals?.sessions || sites.reduce((sum, s) => sum + (s.database?.sessions || 0), 0);
+  const sessionsCount = sessionsData?.total ?? (isAllSites ? allSitesSessions : (currentSiteSummary?.database?.sessions || 0));
+  const suspiciousSessionsCount = sessionsData?.suspiciousCount ?? (isAllSites ? (overviewData?.totals?.pending?.suspiciousSessions || 0) : 0);
   const hiddenVectorsCount = seoAlerts.length;
+  const unreadableMarkersCount = isAllSites
+    ? (overviewData?.sites || sites).reduce((sum, s) => sum + (s.files?.unreadable?.length || 0), 0)
+    : (currentSiteSummary?.files?.unreadable?.length || 0);
 
   return (
     <div className="flex flex-col gap-6">
@@ -364,23 +372,36 @@ defined('ABSPATH') || exit;
 
         {/* Site Switcher & Actions */}
         <div className="flex items-center gap-3 flex-wrap">
-          {/* Cluster Switcher */}
+          {/* Cluster Switcher com opção de Todos os Sites */}
           <div className="flex items-center bg-surface-container-lowest p-1 rounded-lg border border-outline-variant/30">
+            <button
+              type="button"
+              onClick={() => {
+                setInternalSiteKey('all');
+                if (onSelectSite) onSelectSite('all');
+              }}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs font-headline font-semibold transition-all cursor-pointer ${
+                isAllSites
+                  ? 'bg-surface-container-high text-primary shadow-sm border border-outline-variant/30'
+                  : 'text-on-surface-variant hover:text-on-surface'
+              }`}
+            >
+              <span className={`w-2 h-2 rounded-full ${isAllSites ? 'bg-secondary' : 'bg-outline-variant'}`} />
+              <span>Todos os Sites ({sites.length})</span>
+            </button>
             {sites.map((site) => {
-              const isCurrent = site.key === activeSiteKey;
+              const isCurrent = !isAllSites && site.key === activeSiteKey;
               return (
                 <button
                   key={site.key}
                   type="button"
                   onClick={() => {
                     setInternalSiteKey(site.key);
-                    if (onSelectSite && selectedSite !== 'all') {
-                      onSelectSite(site.key);
-                    }
+                    if (onSelectSite) onSelectSite(site.key);
                   }}
                   className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs font-headline font-semibold transition-all cursor-pointer ${
                     isCurrent
-                      ? 'bg-surface-container-high text-primary shadow-sm'
+                      ? 'bg-surface-container-high text-primary shadow-sm border border-outline-variant/30'
                       : 'text-on-surface-variant hover:text-on-surface'
                   }`}
                 >
@@ -458,7 +479,7 @@ defined('ABSPATH') || exit;
           <div className="flex items-baseline justify-between">
             <div className="flex flex-col">
               <span className="font-headline font-bold text-3xl text-secondary tracking-tight">
-                {currentSiteSummary?.files?.unreadable?.length || 0}
+                {unreadableMarkersCount}
               </span>
               <span className="font-mono text-xs text-on-surface-variant flex items-center gap-1 mt-1">
                 Payloads &le; 64B Imunizados
@@ -596,7 +617,11 @@ defined('ABSPATH') || exit;
                     Inspeção Criptográfica de Hashes SHA-256
                   </h3>
                   <p className="font-mono text-xs text-outline">
-                    Site: <span className="text-on-surface font-semibold">{currentSiteObj.name}</span> ({currentSiteObj.key})
+                    {isAllSites ? (
+                      <span>Escopo: <span className="text-primary font-bold">Todos os Sites ({sites.length})</span> • Soma Consolidada do Perímetro</span>
+                    ) : (
+                      <span>Site: <span className="text-on-surface font-semibold">{currentSiteObj.name}</span> ({currentSiteObj.key})</span>
+                    )}
                   </p>
                 </div>
               </div>
@@ -768,13 +793,18 @@ defined('ABSPATH') || exit;
 
                       return (
                         <tr
-                          key={row.path}
+                          key={`${row.siteKey || ''}:${row.path}`}
                           onClick={() => setSelectedFileModal(row)}
                           className="hover:bg-surface-container/50 transition-colors cursor-pointer group"
                         >
                           {/* Path */}
                           <td className="py-2.5 px-4">
                             <div className="flex items-center gap-2">
+                              {row.siteName && (
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-surface-container-high text-primary border border-primary/20 shrink-0">
+                                  {row.siteName}
+                                </span>
+                              )}
                               <span className="material-symbols-outlined text-base text-outline group-hover:text-primary transition-colors">
                                 {row.path.endsWith('.php')
                                   ? 'code'
@@ -1045,7 +1075,7 @@ defined('ABSPATH') || exit;
                     Perímetro de Autenticação Conforme
                   </h4>
                   <p className="font-sans text-xs text-on-surface-variant">
-                    Nenhuma sessão anômala ou com IP de saída de servidor detectada em <code className="text-primary font-mono">{currentSiteObj.name}</code>.
+                    Nenhuma sessão anômala ou com IP de saída de servidor detectada em <code className="text-primary font-mono">{isAllSites ? 'todos os sites monitorados' : currentSiteObj.name}</code>.
                   </p>
                 </div>
               </div>
@@ -1072,9 +1102,9 @@ defined('ABSPATH') || exit;
                   <h3 className="font-headline font-bold text-base text-on-surface">
                     Tokens de Sessão em wp_usermeta
                   </h3>
-                  <span className="font-mono text-xs text-outline">
-                    {sessionsData?.total || 0} Sessões Ativas • Tolerância de expiração: 48h inativas
-                  </span>
+                  <p className="font-mono text-xs text-outline">
+                    {sessionsData?.total || 0} Sessões Ativas • Tolerância: 48h inativas {isAllSites && '• Escopo Consolidado'}
+                  </p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -1114,7 +1144,7 @@ defined('ABSPATH') || exit;
                   ) : !sessionsData?.sessions || sessionsData.sessions.length === 0 ? (
                     <tr>
                       <td colSpan="5" className="py-12 text-center text-outline">
-                        Nenhuma sessão ativa encontrada para este site.
+                        Nenhuma sessão ativa encontrada {isAllSites ? 'nos bancos de dados dos sites monitorados' : 'para este site'}.
                       </td>
                     </tr>
                   ) : (
@@ -1122,7 +1152,7 @@ defined('ABSPATH') || exit;
                       const isSuspicious = sess.suspicious;
                       return (
                         <tr
-                          key={`${sess.userId}-${sess.ip}-${idx}`}
+                          key={`${sess.siteKey || ''}-${sess.userId}-${sess.ip}-${idx}`}
                           className={`transition-colors ${
                             isSuspicious
                               ? 'bg-error-container/10 hover:bg-error-container/20'
@@ -1142,8 +1172,13 @@ defined('ABSPATH') || exit;
                                 {sess.login ? sess.login.charAt(0).toUpperCase() : 'U'}
                               </div>
                               <div className="flex flex-col">
-                                <span className="font-headline font-semibold text-on-surface">
-                                  {sess.login || `User #${sess.userId}`}
+                                <span className="font-headline font-semibold text-on-surface flex items-center gap-2">
+                                  <span>{sess.login || `User #${sess.userId}`}</span>
+                                  {sess.siteName && (
+                                    <span className="px-1.5 py-0.2 rounded text-[10px] font-mono bg-surface-container-high text-primary border border-primary/20">
+                                      {sess.siteName}
+                                    </span>
+                                  )}
                                 </span>
                                 <span className="font-mono text-[10px] text-outline">
                                   ID: {sess.userId}

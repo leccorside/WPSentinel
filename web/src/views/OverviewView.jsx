@@ -25,14 +25,34 @@ export function OverviewView({
 
   const totals = overviewData?.totals || {};
   const sites = overviewData?.sites || [];
-  const filteredSites = selectedSite === 'all' ? sites : sites.filter((s) => s.key === selectedSite);
+  const isAllSites = selectedSite === 'all';
+  const filteredSites = isAllSites ? sites : sites.filter((s) => s.key === selectedSite);
+  const singleSite = !isAllSites ? sites.find((s) => s.key === selectedSite) : null;
 
-  const pendingCrit = totals.pending?.critical || 0;
-  const pendingHigh = totals.pending?.high || 0;
-  const filesMonitored = totals.filesMonitored || 0;
-  const sessionsTotal = totals.sessions || 0;
-  const suspiciousSessions = totals.pending?.suspiciousSessions || 0;
-  const hiddenLinksTotal = totals.pending?.hiddenLinks || 0;
+  // Soma de todos os sites quando 'all', ou dados específicos do site selecionado
+  const filesMonitored = isAllSites
+    ? (totals.filesMonitored || sites.reduce((sum, s) => sum + (s.files?.monitored || 0), 0))
+    : (singleSite?.files?.monitored || 0);
+
+  const sessionsTotal = isAllSites
+    ? (totals.sessions || sites.reduce((sum, s) => sum + (s.database?.sessions || 0), 0))
+    : (singleSite?.database?.sessions || 0);
+
+  const pendingCrit = isAllSites
+    ? (totals.pending?.critical || 0)
+    : (alerts.filter((a) => a.severity === 'critical' && a.pending).length);
+
+  const pendingHigh = isAllSites
+    ? (totals.pending?.high || 0)
+    : (alerts.filter((a) => a.severity === 'high' && a.pending).length);
+
+  const suspiciousSessions = isAllSites
+    ? (totals.pending?.suspiciousSessions || 0)
+    : (alerts.filter((a) => a.message === 'Sessão de login suspeita' && a.pending).length);
+
+  const hiddenLinksTotal = isAllSites
+    ? (totals.pending?.hiddenLinks || 0)
+    : (alerts.filter((a) => /Links externos ocultos/.test(a.message) && a.pending).length);
 
   // Carrega alertas do feed
   const loadAlerts = async () => {
@@ -285,6 +305,34 @@ export function OverviewView({
               Auditoria Criptográfica Remota
             </span>
           </div>
+
+          {isAllSites && sites.length > 1 && (
+            <div className="p-4 rounded-xl bg-surface-container border border-primary/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg bg-primary/10 border border-primary/30 flex items-center justify-center text-primary shrink-0">
+                  <span className="material-symbols-outlined text-xl">hub</span>
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-headline font-bold text-sm text-on-surface">
+                      Soma Consolidada do Perímetro
+                    </span>
+                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-primary/20 text-primary">
+                      {sites.length} SITES ATIVOS
+                    </span>
+                  </div>
+                  <span className="font-mono text-xs text-on-surface-variant">
+                    Total: <strong className="text-secondary font-bold">{filesMonitored.toLocaleString('pt-BR')}</strong> arquivos sob custódia • <strong className="text-secondary font-bold">{sessionsTotal}</strong> sessões MySQL auditadas
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 text-xs font-mono">
+                <span className="px-2.5 py-1 bg-secondary/10 border border-secondary/30 text-secondary rounded-lg font-semibold">
+                  100% Monitorado
+                </span>
+              </div>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {filteredSites.map((site) => {

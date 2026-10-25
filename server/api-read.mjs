@@ -85,17 +85,41 @@ export function createReadRouter({ paths, getRuntime = () => ({ monitor: { state
   }));
 
   router.get('/files', route(async (req, res) => {
-    const site = requireSite(req.query.site);
+    const isAll = !req.query.site || req.query.site === 'all';
+    const targetSites = isAll ? sites() : [requireSite(req.query.site)];
     const [{ value: state }, { value: baseline }] = await Promise.all([readState(dataDir), readBaseline(dataDir)]);
-    const rows = compareFiles(state?.sites?.[site.key]?.files, baseline?.sites?.[site.key]?.files);
+
+    let rows = [];
+    let latestScannedAt = null;
+
+    for (const site of targetSites) {
+      const siteRows = compareFiles(state?.sites?.[site.key]?.files, baseline?.sites?.[site.key]?.files);
+      const siteScannedAt = state?.sites?.[site.key]?.scannedAt || null;
+      if (siteScannedAt && (!latestScannedAt || new Date(siteScannedAt) > new Date(latestScannedAt))) {
+        latestScannedAt = siteScannedAt;
+      }
+      for (const row of siteRows) {
+        rows.push({
+          ...row,
+          siteKey: site.key,
+          siteName: site.name,
+        });
+      }
+    }
+
     const statuses = list(req.query.status).filter((s) => FILE_STATUSES.includes(s));
     const q = String(req.query.q || '').trim().toLowerCase();
-    const filtered = rows.filter((row) => (!statuses.length || statuses.includes(row.status)) && (!q || row.path.toLowerCase().includes(q) || row.hash?.startsWith(q)));
+    const filtered = rows.filter((row) =>
+      (!statuses.length || statuses.includes(row.status))
+      && (!q || row.path.toLowerCase().includes(q) || row.hash?.startsWith(q) || (row.siteName && row.siteName.toLowerCase().includes(q)))
+    );
     const { offset, limit } = page(req.query, 50, 500);
+
     res.json({
-      site: site.key,
+      site: isAll ? 'all' : targetSites[0].key,
+      siteName: isAll ? `Todos os Sites (${targetSites.length})` : targetSites[0].name,
       baselineTrustedAt: baseline?.trustedAt || null,
-      scannedAt: state?.sites?.[site.key]?.scannedAt || null,
+      scannedAt: latestScannedAt,
       counts: countByStatus(rows),
       total: filtered.length,
       offset,
@@ -106,7 +130,8 @@ export function createReadRouter({ paths, getRuntime = () => ({ monitor: { state
 
   // Download do que difere da baseline (alterados, novos, removidos e sem hash), por site ou de todos.
   router.get('/baseline-diff', route(async (req, res) => {
-    const selected = req.query.site ? [requireSite(req.query.site)] : sites();
+    const isAll = !req.query.site || req.query.site === 'all';
+    const selected = isAll ? sites() : [requireSite(req.query.site)];
     const [{ value: state }, { value: baseline }] = await Promise.all([readState(dataDir), readBaseline(dataDir)]);
     const diff = {
       generatedAt: new Date().toISOString(),
