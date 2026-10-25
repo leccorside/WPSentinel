@@ -1,25 +1,105 @@
-# WP Sentinel
+<div align="center">
 
-**WP Sentinel** is an external, agentless security monitor for WordPress. It watches your sites from the
-outside — over SFTP, MySQL and HTTP — so nothing needs to be installed on the server, and a compromised site
-can't disable it.
+# 🛡️ WP Sentinel
 
-It tracks file integrity against a trusted baseline and flags webshells, malicious drop-ins (`db.php`,
-`advanced-cache.php`, `object-cache.php`) and malware markers. It also catches rogue admins, hijacked sessions,
-Application Passwords, malicious cron hooks and hidden SEO spam links injected into page content.
+### Monitoramento externo de segurança, integridade e limpeza assistida para WordPress
 
-When something is found, the guided cleanup builds a plan, separates high-confidence fixes from items that need
-human review, backs up everything it changes and only runs after explicit confirmation. Every scan and cleanup
-is recorded in a plain-text daily report.
+**Proteja múltiplos sites sem instalar plugins ou agentes nos servidores monitorados.**
 
-Sites, credentials and paths live in a single `.env` file, so one installation can watch any number of
-WordPress sites, even across different hosts.
+![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)
+![React](https://img.shields.io/badge/Painel-React-149ECA?style=for-the-badge&logo=react&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white)
+![WordPress](https://img.shields.io/badge/WordPress-Monitoramento-21759B?style=for-the-badge&logo=wordpress&logoColor=white)
+
+![Arquitetura](https://img.shields.io/badge/Arquitetura-Agentless-374151?style=flat-square)
+![Inspeção](https://img.shields.io/badge/Varredura-Somente%20leitura-15803D?style=flat-square)
+![Relatórios](https://img.shields.io/badge/Relat%C3%B3rios-TXT-64748B?style=flat-square)
+![Idiomas](https://img.shields.io/badge/Documenta%C3%A7%C3%A3o-pt--BR-64748B?style=flat-square)
+
+</div>
+
+> [!IMPORTANT]
+> As **varreduras são somente leitura**. A **limpeza assistida é uma operação separada**, capaz de alterar arquivos e registros do banco **somente após confirmação explícita**. Faça revisão do plano e mantenha backups confiáveis antes de executar qualquer correção.
+
+## 📚 Índice
+
+- [Visão geral](#-visão-geral)
+- [Principais recursos](#-principais-recursos)
+- [Como funciona](#-como-funciona)
+- [Instalação e configuração](#-instalação-e-configuração)
+- [Frequência e hash completo](#️-frequência-e-hash-completo)
+- [Painel web com Docker](#️-painel-web-com-docker)
+- [Deploy em VPS](#️-deploy-em-vps-produção)
+- [Limpeza assistida](#-limpeza-assistida)
+- [Relatórios e auditoria](#-relatórios-e-auditoria)
+- [Códigos de saída](#-códigos-de-saída)
+- [Boas práticas de segurança](#-boas-práticas-de-segurança)
 
 ---
 
-## Visão geral (pt-BR)
+## 🌟 Principais recursos
 
-Monitor externo e somente-leitura para sites WordPress. Os sites, caminhos, acessos SFTP e bancos ficam
+| Recurso | O que o WP Sentinel faz |
+|:--|:--|
+| 🧬 **Integridade de arquivos** | Compara arquivos monitorados com um baseline, incluindo hashes SHA-256 periódicos. |
+| 🦠 **Detecção de malware** | Analisa webshells, PHP em locais suspeitos, marcadores de malware e drop-ins maliciosos. |
+| 👤 **Contas e sessões** | Identifica novos usuários, mudanças de privilégios, sessões suspeitas e Application Passwords quando há acesso ao banco. |
+| 🔎 **SEO spam** | Procura links externos ocultos no HTML público e no conteúdo armazenado em WordPress/Elementor. |
+| 🌐 **Monitoramento HTTP** | Verifica disponibilidade, redirecionamentos e cabeçalhos de segurança. |
+| 🧹 **Limpeza guiada** | Gera plano, exige confirmação, cria backups e separa itens que dependem de revisão humana. |
+| 📁 **Auditoria** | Armazena alertas em JSONL e produz relatórios técnicos diários em TXT. |
+| 🖥️ **Painel React** | Disponibiliza uma interface web executada em Docker, compartilhando dados com a CLI. |
+| 🏢 **Múltiplos sites** | Gerencia WordPress em hospedagens diferentes por meio de configurações no `.env`. |
+
+## 🧭 Como funciona
+
+```mermaid
+flowchart LR
+    A[WP Sentinel] --> B[SFTP]
+    A --> C[HTTP]
+    A --> D[(MySQL opcional)]
+    B --> E[Integridade e malware]
+    C --> F[Disponibilidade e SEO spam]
+    D --> G[Usuários, sessões e conteúdo]
+    E --> H[Alertas e relatórios]
+    F --> H
+    G --> H
+    H --> I[Plano de limpeza]
+    I --> J{Confirmação humana?}
+    J -->|Sim| K[Backup e correções]
+    J -->|Não| L[Sem alterações]
+```
+
+**Fluxo de operação:** `Configurar sites` → `Executar varredura` → `Analisar alertas` → `Revisar plano` → `Confirmar limpeza, se necessário` → `Validar com nova varredura`.
+
+### ⚡ Comece rapidamente
+
+**Pré-requisitos:** Node.js 20+ para execução local; Docker e Docker Compose para o painel em container.
+
+```bash
+# 1. Prepare a configuração (Windows PowerShell)
+Copy-Item .env.example .env
+
+# 2. Edite o .env com os sites, credenciais e caminhos corretos
+
+# 3. Instale as dependências (execução local)
+npm install
+
+# 4. Execute uma verificação inicial
+npm run scan:full
+
+# 5. Opcional: inicie o painel em Docker
+docker compose up -d --build
+```
+
+> [!TIP]
+> A primeira execução estabelece uma referência a partir do estado atual, que **não deve ser considerada automaticamente confiável**. Revise os alertas e valide o ambiente antes de redefinir a baseline com `npm run reset-baseline`.
+
+---
+
+## ✨ Visão geral
+
+Monitor externo e **somente leitura durante as varreduras** para sites WordPress. Os sites, caminhos, acessos SFTP e bancos ficam
 todos no `.env` (nada de site fica no código), então ele serve para qualquer WordPress. Ele verifica:
 
 - arquivos executáveis novos, alterados ou removidos por SFTP;
@@ -45,14 +125,14 @@ todos no `.env` (nada de site fica no código), então ele serve para qualquer W
 - usuários e mudanças de permissões, Application Passwords, sessões, novos posts,
   plugins ativos, domínios configurados e WP-Cron, quando o banco aceitar conexão remota.
 
-O monitor nunca altera os sites ou o banco. Alertas são gravados em `.monitor-data/alerts.jsonl`.
+Durante a monitoração e as varreduras, o monitor não altera os sites nem o banco. **Somente a limpeza assistida, mediante confirmação explícita, pode realizar alterações.** Alertas são gravados em `.monitor-data/alerts.jsonl`.
 
 Arquivos `wp-content/uploads/sucuri/sucuri-*.php` são dados internos voláteis do
 Sucuri e não entram na comparação de hashes. Qualquer outro PHP em `uploads`
 continua sendo tratado como crítico, e a execução web nessa pasta é testada em
 todo ciclo.
 
-## Configuração
+## 🚀 Instalação e configuração
 
 1. Instale Node.js 20 ou superior.
 2. Copie `.env.example` para `.env`.
@@ -70,7 +150,7 @@ Para incluir um site, crie o bloco dele e acrescente o prefixo em `SITES`; para 
 da lista. A primeira varredura de um site novo salva o estado atual como referência. Não mude
 `<PREFIXO>_KEY` de um site que já tem histórico: é ela que liga o site aos dados em `.monitor-data`.
 
-### Frequência e hash completo
+### ⏱️ Frequência e hash completo
 
 - `INTERVAL_SECONDS` (padrão 300): espera entre o fim de um ciclo e o início do próximo no `run-monitor.cmd`.
 - `FULL_HASH_EVERY` (padrão 24): de quantos em quantos ciclos o
@@ -86,7 +166,7 @@ da lista. A primeira varredura de um site novo salva o estado atual como referê
   baixa todos os arquivos.
 - `MAX_DOWNLOAD_BYTES` (padrão 8 MiB): arquivos maiores não são baixados para hash nem inspeção.
 
-## Painel web (Docker)
+## 🖥️ Painel web com Docker
 
 O painel web React SPA do **WP Sentinel** roda inteiramente empacotado em container Docker com arquitetura multi-stage (Node.js 22 e dist estático otimizado). Ele compartilha exatamente o mesmo motor CLI e os mesmos diretórios de dados locais.
 
@@ -111,21 +191,21 @@ O painel estará disponível em: **<http://127.0.0.1:8787>** (ou na porta config
 ### Volumes e persistência
 
 O `docker-compose.yml` mapeia três volumes fundamentais do host para dentro do container:
-- `./.env:/app/.env`: Arquivo de credenciais e perâmetros dos sites monitorados (deve existir antes de subir o container).
+- `./.env:/app/.env`: Arquivo de credenciais e parâmetros dos sites monitorados (deve existir antes de subir o container).
 - `${DATA_DIR:-./.monitor-data}:/app/.monitor-data`: Histórico de integridade, baseline confiável (`trusted-baseline.json`), estado atual (`state.json`), feed de alertas (`alerts.jsonl`), backups da limpeza (`backups/`) e estado de leitura de notificações (`panel-notifications.json`).
 - `${REPORTS_DIR:-./reports}:/app/reports`: Relatórios técnicos diários em formato TXT e resumos executivos.
 
 > [!NOTE]
 > Como os diretórios de dados são compartilhados, os scripts de linha de comando (`run-scan.cmd`, `run-monitor.cmd`, `run-cleanup.cmd`) e o painel web operam sobre a mesma base. Não execute o monitor contínuo na CLI local enquanto o container estiver executando o monitor no painel.
 
-### Modelo de segurança do painel
+### 🔐 Modelo de segurança do painel
 
 - **Acesso local (Loopback):** Por padrão, `PANEL_HOST=127.0.0.1`. O painel só aceita conexões da própria máquina e não exige autenticação por senha.
 - **Acesso externo (VPS ou Rede):** Se `PANEL_HOST` for alterado para qualquer endereço fora do loopback (ex.: `0.0.0.0`), o servidor ativa uma **trava de segurança rigorosa**: ele se recusa a iniciar se `PANEL_PASSWORD` não estiver preenchida no `.env`. Toda requisição exigirá autenticação com cookies HTTP-Only seguros, HMAC assinado e rate limiting contra força bruta.
 
 ---
 
-## Deploy em VPS (Guia de Produção)
+## ☁️ Deploy em VPS (produção)
 
 O WP Sentinel foi concebido para funcionar tanto no ambiente local quanto em servidores dedicados ou VPS Linux (Ubuntu 22.04/24.04 LTS ou Debian 12), em arquiteturas `x86_64` (amd64) ou `arm64`. O deploy em produção fica a seu critério quando decidir migrar o monitoramento para uma nuvem 24/7.
 
@@ -176,7 +256,7 @@ PANEL_HOST=0.0.0.0
 PANEL_PORT=8787
 
 # OBRIGATÓRIO fora do loopback: senha forte para login no painel
-PANEL_PASSWORD=Defina_Aqui_Uma_Senha_Extremamente_Forte_E_Longa
+PANEL_PASSWORD=SUBSTITUA_POR_UMA_SENHA_FORTE_E_UNICA
 
 # Iniciar o monitoramento contínuo automaticamente ao ligar o container
 MONITOR_AUTOSTART=true
@@ -253,7 +333,7 @@ Rotina diária recomendada de backup dos dados na VPS (crontab):
 
 ---
 
-## Limpeza assistida
+## 🧹 Limpeza assistida
 
 Execute `run-cleanup.cmd` depois que o monitor gerar alertas. O programa:
 
@@ -286,7 +366,7 @@ entrar de novo. Arquivos que
 já existiam na baseline, posts novos e novos hooks de cron nunca são apagados
 automaticamente, pois podem ser mudanças legítimas.
 
-### SEO spam (links externos ocultos)
+### SEO spam: links externos ocultos
 
 Quando encontra links externos ocultos, a limpeza:
 
@@ -304,7 +384,7 @@ Depois de uma limpeza, execute `run-scan.cmd` para confirmar o estado.
 
 Na primeira execução, o estado atual é salvo como referência. Mesmo assim, assinaturas perigosas e arquivos em locais proibidos são analisados e alertados. Use `npm run reset-baseline` somente depois de confirmar que o estado remoto é confiável; esse comando também substitui a baseline usada pela limpeza.
 
-## Relatórios diários
+## 📄 Relatórios e auditoria
 
 Cada varredura e cada limpeza grava uma seção em `reports/REPORT-DD.MM.AA.txt` (data de Brasília). O
 primeiro registro do dia cria o arquivo com cabeçalho; os seguintes acrescentam seções numeradas, no
@@ -320,10 +400,51 @@ mesmo formato de `reports/REPORT-23.10.26.txt`:
 Os relatórios citam usuários, IPs e caminhos do servidor; trate-os como documentos internos. A pasta
 `reports/` está no `.gitignore` e não é versionada.
 
-## Códigos de saída
+## 🔢 Códigos de saída
 
 - `0`: nenhuma anomalia alta ou crítica;
 - `1`: alerta de severidade alta;
 - `2`: alerta crítico ou falha geral da varredura.
 
 O arquivo `.env` contém segredos e está ignorado pelo Git. Não o envie por e-mail, chat ou repositório.
+
+
+---
+
+## 🔐 Boas práticas de segurança
+
+- **Proteja credenciais:** mantenha `.env` fora do Git, use contas SFTP/MySQL com privilégios mínimos e restrinja acesso aos arquivos de configuração.
+- **Não exponha o painel diretamente:** em VPS, utilize autenticação e HTTPS via proxy reverso. Confirme o vínculo da porta Docker ao loopback antes de liberar o serviço.
+- **Proteja dados sensíveis:** `.monitor-data/` e `reports/` podem conter IPs, caminhos, informações de usuários e dados de auditoria.
+- **Valide alertas:** alterações legítimas podem aparecer como suspeitas. Não execute remoções sem revisar o plano e os backups.
+- **Evite monitoramento concorrente:** não execute dois monitores contínuos compartilhando os mesmos diretórios de dados.
+- **Reavalie o baseline:** o estado inicial pode já conter comprometimentos; só substitua o baseline depois de confirmar a integridade do site.
+
+<details>
+<summary><strong>📌 Referência rápida de arquivos e diretórios</strong></summary>
+
+| Caminho | Finalidade |
+|:--|:--|
+| `.env` | Configuração de sites e credenciais (secreto). |
+| `.env.example` | Exemplo de variáveis disponíveis. |
+| `.monitor-data/alerts.jsonl` | Registro estruturado de alertas. |
+| `.monitor-data/trusted-baseline.json` | Baseline confiável utilizada na análise e limpeza. |
+| `.monitor-data/state.json` | Estado operacional persistido. |
+| `.monitor-data/last-cleanup-plan.json` | Último plano de limpeza criado. |
+| `.monitor-data/backups/` | Backups gerados durante a limpeza. |
+| `reports/REPORT-DD.MM.AA.txt` | Relatórios diários no horário de Brasília. |
+| `src/malware-markers.mjs` | Regras de marcadores suspeitos. |
+| `src/dropins.mjs` | Classificação de drop-ins. |
+| `src/hidden-links.mjs` | Detecção de links ocultos. |
+
+</details>
+
+---
+
+<div align="center">
+
+**WP Sentinel** · Monitoramento externo · Integridade · Auditoria · Limpeza assistida
+
+<sub>Documentação operacional — mantenha as credenciais e os relatórios privados.</sub>
+
+</div>
