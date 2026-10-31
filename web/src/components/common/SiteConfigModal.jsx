@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { api } from '../../api/client';
 
 export function SiteConfigModal({
@@ -9,28 +9,30 @@ export function SiteConfigModal({
 }) {
   const isEditing = Boolean(site && site.key);
 
-  const [formData, setFormData] = useState({
-    key: site?.key || '',
-    name: site?.name || '',
-    url: site?.url || 'https://',
-    remoteRoot: site?.remoteRoot || '/public_html',
+  const initialFormState = (s) => ({
+    key: s?.key || '',
+    name: s?.name || '',
+    url: s?.url || 'https://',
+    remoteRoot: s?.remoteRoot || '/public_html',
     sftp: {
-      host: site?.sftp?.host || '',
-      port: site?.sftp?.port || 22,
-      username: site?.sftp?.username || '',
+      host: s?.sftp?.host || '',
+      port: s?.sftp?.port || 22,
+      username: s?.sftp?.username || '',
       password: '',
     },
     db: {
-      enabled: site?.db?.enabled ?? true,
-      host: site?.db?.host || '',
-      port: site?.db?.port || 3306,
-      database: site?.db?.database || '',
-      user: site?.db?.user || '',
+      enabled: s?.db?.enabled ?? true,
+      host: s?.db?.host || '',
+      port: s?.db?.port || 3306,
+      database: s?.db?.database || '',
+      user: s?.db?.user || '',
       password: '',
-      prefix: site?.db?.prefix || 'wp_',
-      ssl: Boolean(site?.db?.ssl),
+      prefix: s?.db?.prefix || 'wp_',
+      ssl: Boolean(s?.db?.ssl),
     },
   });
+
+  const [formData, setFormData] = useState(() => initialFormState(site));
 
   const [showSftpPass, setShowSftpPass] = useState(false);
   const [showDbPass, setShowDbPass] = useState(false);
@@ -40,14 +42,30 @@ export function SiteConfigModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  // Sincroniza formulário sempre que o site ou abertura mudar
+  useEffect(() => {
+    if (isOpen) {
+      setFormData(initialFormState(site));
+      setTestResult(null);
+      setError('');
+      setShowSftpPass(false);
+      setShowDbPass(false);
+    }
+  }, [site, isOpen]);
+
   if (!isOpen) return null;
+
+  const getPayload = () => ({
+    ...formData,
+    key: String(isEditing ? (formData.key || site?.key || '') : formData.key).trim().toLowerCase(),
+  });
 
   const handleTest = async () => {
     setTesting(true);
     setTestResult(null);
     setError('');
     try {
-      const res = await api.sites.testManage(formData);
+      const res = await api.sites.testManage(getPayload());
       setTestResult(res);
     } catch (err) {
       setError(`Falha ao testar conexão: ${err.message}`);
@@ -61,7 +79,7 @@ export function SiteConfigModal({
     setSaving(true);
     setError('');
     try {
-      await api.sites.saveManage(formData);
+      await api.sites.saveManage(getPayload());
       if (onSaved) onSaved();
       onClose();
     } catch (err) {
@@ -212,6 +230,11 @@ export function SiteConfigModal({
                   onChange={(e) => setFormData({ ...formData, sftp: { ...formData.sftp, port: Number(e.target.value) || 22 } })}
                   className="w-full px-3.5 py-2 bg-surface-container-lowest border border-outline-variant/40 rounded-lg text-xs font-mono text-on-surface outline-none focus:border-primary"
                 />
+                <span className={`text-[10px] font-mono ${Number(formData.sftp.port) === 21 ? 'text-error' : 'text-outline-variant'}`}>
+                  {Number(formData.sftp.port) === 21
+                    ? 'A porta 21 é FTP. O WP Sentinel usa SFTP (SSH): normalmente porta 22.'
+                    : 'SFTP (SSH), normalmente 22. Contas FTP adicionais (usuario@dominio) não têm SFTP.'}
+                </span>
               </div>
 
               <div>

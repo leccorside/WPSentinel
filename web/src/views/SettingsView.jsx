@@ -771,7 +771,8 @@ export function SettingsView({
                         <button
                           type="button"
                           onClick={() => {
-                            setSelectedSiteForEdit(site);
+                            const fullSite = managedSites.find((s) => s.key === site.key) || site;
+                            setSelectedSiteForEdit(fullSite);
                             setSiteModalOpen(true);
                           }}
                           className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-container-high hover:bg-surface-bright text-primary rounded-lg font-headline text-xs font-semibold transition-colors cursor-pointer"
@@ -1121,17 +1122,20 @@ export function SettingsView({
       {/* ======================================================== */}
       {/* MODAL: CADASTRO E EDIÇÃO DE SITES VIA TELA               */}
       {/* ======================================================== */}
-      <SiteConfigModal
-        isOpen={siteModalOpen}
-        site={selectedSiteForEdit}
-        onClose={() => {
-          setSiteModalOpen(false);
-          setSelectedSiteForEdit(null);
-        }}
-        onSaved={() => {
-          loadManagedSites();
-        }}
-      />
+      {siteModalOpen && (
+        <SiteConfigModal
+          key={`modal-site-${selectedSiteForEdit?.key || 'novo'}`}
+          isOpen={siteModalOpen}
+          site={selectedSiteForEdit}
+          onClose={() => {
+            setSiteModalOpen(false);
+            setSelectedSiteForEdit(null);
+          }}
+          onSaved={() => {
+            loadManagedSites();
+          }}
+        />
+      )}
 
       {/* ======================================================== */}
       {/* MODAL: CONFIRMAÇÃO DE EXCLUSÃO DE SITE                   */}

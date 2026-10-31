@@ -452,6 +452,20 @@ export function makeItemKey(item) {
   return crypto.createHash('sha256').update(seed).digest('hex').slice(0, 16);
 }
 
+// Os erros do ssh2 são genéricos; os casos comuns em hospedagem cPanel ganham uma explicação.
+function explainSftpError(message, sftp) {
+  if (Number(sftp.port) === 21) {
+    return `${message} — a porta 21 é FTP; o WP Sentinel usa SFTP (SSH), normalmente na porta 22.`;
+  }
+  if (/All configured authentication methods failed/i.test(message)) {
+    const subAccount = String(sftp.username || '').includes('@');
+    return `${message} — ${subAccount
+      ? 'contas FTP adicionais do cPanel (usuario@dominio) não têm acesso SFTP; use o usuário principal da hospedagem.'
+      : 'usuário ou senha recusados pelo SSH (senha trocada, acesso SSH desativado ou IP bloqueado pela hospedagem).'}`;
+  }
+  return message;
+}
+
 // Teste SFTP
 async function testSftp(site) {
   const start = Date.now();
@@ -472,7 +486,7 @@ async function testSftp(site) {
       latencyMs: Date.now() - start,
       host: site.sftp.host,
       port: site.sftp.port,
-      error: err.message,
+      error: explainSftpError(err.message, site.sftp),
     };
   } finally {
     if (client) await client.end().catch(() => {});

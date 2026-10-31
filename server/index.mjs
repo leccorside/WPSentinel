@@ -74,6 +74,18 @@ app.use('/api', createOrchestratorRouter({ orchestrator }));
 app.use('/api', createReadRouter({ paths: settings.paths, getRuntime: orchestrator.getRuntime }));
 app.use('/api', (req, res) => res.status(404).json({ error: 'Rota não encontrada' }));
 
+// Erros de qualquer rota /api (e do express.json) sempre em JSON com a mensagem real. Sem isto, o tratador padrão
+// do Express responde um HTML "Bad Request" sem explicação (NODE_ENV=production esconde a mensagem).
+app.use('/api', (error, req, res, next) => {
+  if (res.headersSent) return next(error);
+  const status = error.status || error.statusCode || 500;
+  const message = error.type === 'entity.parse.failed'
+    ? 'O corpo da requisição não é um JSON válido.'
+    : error.message || 'Erro interno do painel.';
+  if (status >= 500) console.error(`${req.method} ${req.originalUrl}: ${error.stack || message}`);
+  res.status(status).json({ error: message });
+});
+
 // Front (SPA): arquivos estáticos e index.html para qualquer outra rota.
 if (existsSync(WEB_DIR)) {
   app.use(express.static(WEB_DIR, { index: false }));
