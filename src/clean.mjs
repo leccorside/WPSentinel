@@ -56,10 +56,17 @@ const lastCleanupIndex = alerts.findLastIndex((event) => event.message === 'clea
 const pendingAlerts = alerts.slice(lastCleanupIndex + 1);
 const plan = { createdAt: new Date().toISOString(), fileActions: [], databaseActions: [], manualReview: [] };
 
+// Alertas de infraestrutura e conectividade não são artefatos maliciosos para limpeza de arquivos.
+const ignoredInPlanMessages = new Set([
+  'Arquivo monitorado foi removido',
+  'Falha ao verificar o site',
+  'Falha geral da varredura',
+]);
+
 for (const alert of pendingAlerts) {
   const site = sites.find((candidate) => candidate.key === alert.site);
   const relativePath = alert.details?.path;
-  if (alert.message === 'Arquivo monitorado foi removido') continue;
+  if (ignoredInPlanMessages.has(alert.message)) continue;
   const knownMaliciousPath = (
     /^(?:wp-content\/mu-plugins|wp-content\/plugins\/vapor-curator-tap)\/vapor-curator-tap\.php$/i.test(relativePath || '') ||
     /^(?:wp-content\/mu-plugins|wp-content\/plugins\/pulse-beacon-ops)\/pulse-beacon-ops\.php$/i.test(relativePath || '')
