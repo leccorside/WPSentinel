@@ -149,3 +149,56 @@ export function assertSftp(site) {
   const missing = ['host', 'username', 'password'].filter((f) => !site.sftp[f]);
   if (missing.length) throw new Error(`Site ${site.envPrefix}: SFTP incompleto (defina SFTP_* ou ${site.envPrefix}_SFTP_*).`);
 }
+
+/**
+ * Conecta um SftpClient com retry automático e backoff exponencial.
+ *
+ * Erros de autenticação (senha errada, usuário bloqueado) são considerados
+ * permanentes e não são retentados — falham imediatamente para não bloquear
+ * o ciclo aguardando timeouts desnecessários.
+ *
+ * @param {import('ssh2-sftp-client')} client  Instância já criada do SftpClient.
+ * @param {object}  sftp                        Credenciais SFTP do site.
+ * @param {object}  [opts]
+ * @param {number}  [opts.readyTimeout=20000]   Timeout de handshake por tentativa (ms).
+ * @param {number}  [opts.maxAttempts=3]         Número máximo de tentativas.
+ * @param {number}  [opts.baseDelayMs=3000]      Delay inicial entre tentativas (ms).
+ * @param {Function}[opts.onRetry]              Callback chamado antes de cada retentativa.
+ */
+export async function connectSftpWithRetry(client, sftp, opts = {}) {
+  const {
+    readyTimeout = 20000,
+    maxAttempts = 3,
+    baseDelayMs = 3000,
+    onRetry = null,
+  } = opts;
+
+  // Erros nesses padrões indicam credencial inválida — retentativa é inútil.
+  const isAuthError = (msg) => /authentication|credentials|All configured authentication methods failed/i.test(msg);
+
+  let lastError;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await client.connect({ ...sftp, readyTimeout });
+      return; // Sucesso — encerra o loop.
+    } catch (err) {
+      lastError = err;
+
+      // Falha de autenticação: propaga imediatamente sem retry.
+      if (isAuthError(err.message)) throw err;
+
+      if (attempt < maxAttempts) {
+        const delay = baseDelayMs * Math.pow(2, attempt - 1); // 3s, 6s, 12s…
+        if (typeof onRetry === 'function') onRetry(attempt, maxAttempts, err.message, delay);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+  }
+
+  // Todas as tentativas esgotadas: propaga o último erro com contexto.
+  const enriched = new Error(
+    `${lastError.message} (após ${maxAttempts} tentativa${maxAttempts > 1 ? 's' : ''})`,
+  );
+  enriched.cause = lastError;
+  throw enriched;
+}

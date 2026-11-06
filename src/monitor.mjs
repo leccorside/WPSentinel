@@ -11,7 +11,7 @@ import mysql from 'mysql2/promise';
 import { findHiddenBlocks, scanElementorData } from './hidden-links.mjs';
 import { lookupServerIps, parseSessions, suspiciousReasons } from './sessions.mjs';
 import { MARKER_DIRS, isMalwareMarker } from './malware-markers.mjs';
-import { assertSftp, dataPaths, loadSites, sftpKey } from './config.mjs';
+import { assertSftp, connectSftpWithRetry, dataPaths, loadSites, sftpKey } from './config.mjs';
 import { classifyPhp, isCacheRootPhp, isDropin } from './dropins.mjs';
 import { appendSection, bullet, dateBR, number, timeBR } from './report.mjs';
 
@@ -115,7 +115,17 @@ async function runCycle() {
     if (!connections.has(id)) {
       assertSftp(site);
       const client = new SftpClient(`wp-monitor-${cycle}-${connections.size}`);
-      await client.connect({ ...site.sftp, readyTimeout: 20000 });
+      await connectSftpWithRetry(client, site.sftp, {
+        readyTimeout: 20000,
+        maxAttempts: 3,
+        baseDelayMs: 3000,
+        onRetry: (attempt, max, reason, delayMs) => {
+          console.warn(
+            `${site.name}: SFTP falhou (tentativa ${attempt}/${max} — ${reason}). ` +
+            `Aguardando ${Math.round(delayMs / 1000)}s antes de tentar novamente...`,
+          );
+        },
+      });
       connections.set(id, client);
     }
     return connections.get(id);

@@ -13,7 +13,7 @@ import path from 'node:path';
 import express from 'express';
 import mysql from 'mysql2/promise';
 import SftpClient from 'ssh2-sftp-client';
-import { loadSites, saveSites, sanitizeSite } from '../src/config.mjs';
+import { loadSites, saveSites, sanitizeSite, connectSftpWithRetry } from '../src/config.mjs';
 import { lookupServerIps, parseSessions, suspiciousReasons } from '../src/sessions.mjs';
 import { ENV_FILE, readEnvFile } from './config.mjs';
 import { readAlerts, readBaseline, readPlan, readState, summarizeSite } from './data.mjs';
@@ -472,7 +472,8 @@ async function testSftp(site) {
   let client;
   try {
     client = new SftpClient(`test-sftp-${Date.now()}`);
-    await client.connect({ ...site.sftp, readyTimeout: 10000 });
+    // O teste do painel usa apenas 1 tentativa (feedback imediato ao usuário).
+    await connectSftpWithRetry(client, site.sftp, { readyTimeout: 10000, maxAttempts: 1 });
     await client.stat(site.remoteRoot);
     return {
       ok: true,

@@ -12,7 +12,7 @@ import mysql from 'mysql2/promise';
 import { serialize, unserialize } from 'php-serialize';
 import { cleanElementorRaw, findHiddenBlocks, scanElementorData, stripHiddenBlocks } from './hidden-links.mjs';
 import { MARKER_DIRS, isMalwareMarker } from './malware-markers.mjs';
-import { assertSftp, dataPaths, loadSites, sftpKey } from './config.mjs';
+import { assertSftp, connectSftpWithRetry, dataPaths, loadSites, sftpKey } from './config.mjs';
 import { DROPIN_FILES, classifyPhp, isCacheRootPhp, isDropin } from './dropins.mjs';
 import { appendSection, bullet, dateBR, timeBR } from './report.mjs';
 
@@ -415,7 +415,17 @@ function sftpPool() {
       if (!connections.has(id)) {
         assertSftp(site);
         const client = new SftpClient(`wp-cleaner-${connections.size}`);
-        await client.connect({ ...site.sftp, readyTimeout: 20000 });
+        await connectSftpWithRetry(client, site.sftp, {
+          readyTimeout: 20000,
+          maxAttempts: 3,
+          baseDelayMs: 3000,
+          onRetry: (attempt, max, reason, delayMs) => {
+            console.warn(
+              `[limpeza] ${site.name}: SFTP falhou (tentativa ${attempt}/${max} — ${reason}). ` +
+              `Aguardando ${Math.round(delayMs / 1000)}s antes de tentar novamente...`,
+            );
+          },
+        });
         connections.set(id, client);
       }
       return connections.get(id);
