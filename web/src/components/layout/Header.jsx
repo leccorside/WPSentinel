@@ -9,6 +9,8 @@ export function Header({
   monitorCycle = 0,
   pendingPlanActions = 0,
   onTriggerScan,
+  activeJob = null,
+  onCancelJob,
   onOpenCleanup,
   onOpenReports,
   onOpenTerminal,
@@ -86,6 +88,23 @@ export function Header({
 
       {/* Right Actions */}
       <div className="flex items-center gap-2.5">
+        {/* Com trabalho em andamento, no lugar de disparar outro (o servidor recusaria com 409): cancelar o atual.
+            A limpeza que já está aplicando alterações não é cancelável (o servidor explica). */}
+        {activeJob ? (
+          <button
+            type="button"
+            onClick={onCancelJob}
+            disabled={activeJob.status === 'cancelling'}
+            title={`Cancelar: ${activeJob.label}`}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-error-container text-on-error-container hover:opacity-90 disabled:opacity-60 rounded-lg text-xs font-headline font-semibold transition-all cursor-pointer max-w-xs"
+          >
+            <span className="material-symbols-outlined text-base animate-spin">progress_activity</span>
+            <span className="hidden sm:inline truncate">
+              {activeJob.status === 'cancelling' ? `Cancelando ${activeJob.label}...` : `Cancelar ${activeJob.label}`}
+            </span>
+            <span className="material-symbols-outlined text-base">close</span>
+          </button>
+        ) : (
         <button
           type="button"
           onClick={onTriggerScan}
@@ -97,6 +116,7 @@ export function Header({
           </span>
           <span className="hidden sm:inline">Disparar Varredura</span>
         </button>
+        )}
 
         <button
           type="button"

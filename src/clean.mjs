@@ -12,7 +12,7 @@ import mysql from 'mysql2/promise';
 import { serialize, unserialize } from 'php-serialize';
 import { cleanElementorRaw, findHiddenBlocks, scanElementorData, stripHiddenBlocks } from './hidden-links.mjs';
 import { MARKER_DIRS, isMalwareMarker } from './malware-markers.mjs';
-import { assertSftp, connectSftpWithRetry, dataPaths, loadSites, sftpKey } from './config.mjs';
+import { assertSftp, connectSftpWithRetry, dataPaths, loadSites, sftpKey, writeFileAtomic } from './config.mjs';
 import { DROPIN_FILES, classifyPhp, isCacheRootPhp, isDropin } from './dropins.mjs';
 import { appendSection, bullet, dateBR, timeBR } from './report.mjs';
 import { lastCleanupFinder, selectSites, siteArg } from './scope.mjs';
@@ -62,7 +62,7 @@ let baseline = await readJson(BASELINE_FILE, null);
 if (!baseline) {
   baseline = structuredClone(state);
   baseline.trustedAt = new Date().toISOString();
-  await fs.writeFile(BASELINE_FILE, `${JSON.stringify(baseline, null, 2)}\n`, 'utf8');
+  await writeFileAtomic(BASELINE_FILE, `${JSON.stringify(baseline, null, 2)}\n`);
   console.log('Baseline confiável criada a partir da última varredura validada.');
 }
 
@@ -150,7 +150,7 @@ plan.manualReview = [...new Map(plan.manualReview.map((item) => [reviewKey(item)
 plan.fileActions = uniqueActions(plan.fileActions);
 plan.databaseActions = uniqueActions(plan.databaseActions);
 plan.id = crypto.createHash('sha256').update(JSON.stringify(plan)).digest('hex').slice(0, 10).toUpperCase();
-await fs.writeFile(PLAN_FILE, `${JSON.stringify(plan, null, 2)}\n`, 'utf8');
+await writeFileAtomic(PLAN_FILE, `${JSON.stringify(plan, null, 2)}\n`);
 
 printPlan(plan);
 const actionCount = plan.fileActions.length + plan.databaseActions.length;

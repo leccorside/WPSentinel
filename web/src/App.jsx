@@ -51,6 +51,23 @@ export default function App() {
     }
   }, [notifications?.unreadCount]);
 
+  // Aba antiga depois de o servidor ser recriado (docker compose up --build) continua com o JavaScript velho e pode
+  // disparar trabalhos do jeito antigo (ex.: varredura sem escopo). Se o servidor reiniciou, pede para recarregar.
+  const [serverRestarted, setServerRestarted] = useState(false);
+  useEffect(() => {
+    let firstStart = null;
+    const check = async () => {
+      try {
+        const health = await fetch('/api/health').then((r) => r.json());
+        if (!firstStart) firstStart = health.startedAt;
+        else if (health.startedAt && health.startedAt !== firstStart) setServerRestarted(true);
+      } catch {}
+    };
+    check();
+    const timer = setInterval(check, 30000);
+    return () => clearInterval(timer);
+  }, []);
+
   // Timer para fechar alertToast automaticamente
   useEffect(() => {
     if (!alertToast) return;
@@ -266,6 +283,15 @@ export default function App() {
     }
   };
 
+  const cancelJob = async () => {
+    try {
+      await api.jobs.cancel();
+      loadData();
+    } catch (err) {
+      setToastMessage({ type: 'error', text: err.message });
+    }
+  };
+
   // Antes de varredura e plano, pergunta o escopo: todos os sites ou um só.
   const SCOPE_REQUESTS = {
     scan: { title: 'Disparar varredura', icon: 'radar', confirmLabel: 'Iniciar varredura', description: 'Verifica arquivos, HTTP e banco. Não altera nada nos sites.' },
@@ -379,6 +405,8 @@ export default function App() {
 
   const currentJob = status?.job;
   const isScanning = currentJob?.status === 'running' && ['scan', 'scan_full'].includes(currentJob?.type);
+  // status.job também traz o último trabalho já terminado: "ativo" só enquanto roda ou espera a confirmação.
+  const activeJob = currentJob && ['running', 'waiting_confirmation', 'cancelling'].includes(currentJob.status) ? currentJob : null;
   const sitesList = status?.sites || overview?.sites || [];
 
   return (
@@ -451,6 +479,20 @@ export default function App() {
         </div>
       )}
 
+      {serverRestarted && (
+        <div className="fixed top-16 left-0 right-0 z-40 px-6 py-2 bg-amber-400/15 border-b border-amber-400/40 text-amber-200 text-xs font-mono flex items-center justify-center gap-3">
+          <span className="material-symbols-outlined text-sm">update</span>
+          <span>O painel foi reiniciado no servidor (pode haver versão nova). Recarregue a página antes de disparar trabalhos.</span>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="px-2.5 py-1 rounded bg-amber-400 text-black font-headline font-semibold cursor-pointer"
+          >
+            Recarregar agora
+          </button>
+        </div>
+      )}
+
       {/* Escolha do escopo (todos os sites ou um) antes de varredura e plano */}
       <SiteScopeModal
         key={scopeRequest ? `${scopeRequest.type}-${selectedSite}` : 'fechado'}
@@ -473,6 +515,8 @@ export default function App() {
         monitorState={status?.monitor?.state || 'stopped'}
         monitorCycle={status?.monitor?.cycle || 0}
         pendingPlanActions={plan?.summary?.actions || 0}
+        activeJob={activeJob}
+        onCancelJob={cancelJob}
         onTriggerScan={() => askScope('scan')}
         onOpenCleanup={() => askScope('plan', {
           onAfter: () => setActiveView('cleanup'),
@@ -572,6 +616,7 @@ export default function App() {
         logs={logs}
         onClear={clearLogs}
         activeJob={currentJob}
+        onCancelJob={activeJob ? cancelJob : null}
         daemonState={status?.monitor?.state || 'stopped'}
       />
 

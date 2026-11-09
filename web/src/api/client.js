@@ -69,6 +69,8 @@ export const api = {
     current: () => request('/api/jobs/current'),
     confirmClean: (code) => request('/api/jobs/clean/confirm', { method: 'POST', body: JSON.stringify({ code }) }),
     cancelClean: () => request('/api/jobs/clean/cancel', { method: 'POST' }),
+    // Varredura/plano em andamento (a limpeza só enquanto espera a confirmação).
+    cancel: () => request('/api/jobs/cancel', { method: 'POST' }),
   },
   monitor: {
     start: () => request('/api/monitor/start', { method: 'POST' }),

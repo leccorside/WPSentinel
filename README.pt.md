@@ -376,6 +376,13 @@ só olha os alertas, arquivos e banco dele, e a execução do plano usa o mesmo 
 Limpeza). Um alerta deixa de ser pendente quando há uma limpeza que cobriu o site dele (a limpeza registra os sites
 que limpou). A redefinição da baseline continua só para todos os sites.
 
+**Cancelar.** Com uma varredura ou geração de plano em andamento, o botão "Disparar Varredura" do cabeçalho vira
+**Cancelar** (também no terminal ao vivo). O processo é encerrado em até ~2 s e nada fica pela metade: o
+`state.json`, a baseline e o plano só são gravados no fim, de forma atômica (arquivo temporário + renomear). A
+limpeza só pode ser cancelada enquanto espera o código de confirmação; aplicando alterações, não é interrompida.
+Se o servidor do painel for reiniciado (ex.: `docker compose up -d --build`), a aba aberta mostra um aviso para
+recarregar a página antes de disparar trabalhos.
+
 Também remove, no banco: opções do malware (`sc_*`, cópias com nome hexadecimal, `wpeditor_*`),
 plugins maliciosos que ficaram na lista de ativos e o snippet "Site Optimizer Bridge" do Code Snippets,
 sempre com backup em `.monitor-data/backups/`. Usuários só são excluídos se o site tiver usuários na

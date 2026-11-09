@@ -6,6 +6,7 @@ export function LiveTerminalModal({
   logs = [],
   onClear,
   activeJob = null,
+  onCancelJob = null,
   daemonState = 'stopped',
 }) {
   const [filter, setFilter] = useState('');
@@ -48,6 +49,16 @@ export function LiveTerminalModal({
               <span className="text-xs font-mono bg-primary-container/20 text-primary border border-primary/30 px-2 py-0.5 rounded">
                 Job: {activeJob.label} ({activeJob.status})
               </span>
+            )}
+            {onCancelJob && (
+              <button
+                type="button"
+                onClick={onCancelJob}
+                className="flex items-center gap-1 text-xs font-headline font-semibold bg-error-container text-on-error-container px-2.5 py-1 rounded hover:opacity-90 cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-sm">stop_circle</span>
+                Cancelar
+              </button>
             )}
             <button
               onClick={onClose}

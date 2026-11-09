@@ -11,7 +11,7 @@ import mysql from 'mysql2/promise';
 import { findHiddenBlocks, scanElementorData } from './hidden-links.mjs';
 import { lookupServerIps, parseSessions, suspiciousReasons } from './sessions.mjs';
 import { MARKER_DIRS, isMalwareMarker } from './malware-markers.mjs';
-import { assertSftp, connectSftpWithRetry, dataPaths, loadSites, sftpKey } from './config.mjs';
+import { assertSftp, connectSftpWithRetry, dataPaths, loadSites, sftpKey, writeFileAtomic } from './config.mjs';
 import { classifyPhp, isCacheRootPhp, isDropin } from './dropins.mjs';
 import { appendSection, bullet, dateBR, number, timeBR } from './report.mjs';
 import { selectSites, siteArg } from './scope.mjs';
@@ -287,10 +287,10 @@ async function runCycle() {
   state.cycle = cycle;
   state.updatedAt = new Date().toISOString();
   state.createdAt ||= state.updatedAt;
-  await fs.writeFile(STATE_FILE, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+  await writeFileAtomic(STATE_FILE, `${JSON.stringify(state, null, 2)}\n`);
   if (RESET_BASELINE) {
     const trusted = { ...state, trustedAt: new Date().toISOString() };
-    await fs.writeFile(BASELINE_FILE, `${JSON.stringify(trusted, null, 2)}\n`, 'utf8');
+    await writeFileAtomic(BASELINE_FILE, `${JSON.stringify(trusted, null, 2)}\n`);
   }
   return totals;
 }

@@ -141,6 +141,14 @@ export function saveSites(sites, dataDir = null) {
   return sanitized;
 }
 
+// Grava um arquivo inteiro de uma vez: escreve num temporário na mesma pasta e renomeia. Um processo morto no meio
+// (cancelamento pelo painel, container derrubado) nunca deixa state.json/baseline/plano pela metade.
+export async function writeFileAtomic(file, text) {
+  const tmp = `${file}.${process.pid}.tmp`;
+  await fs.promises.writeFile(tmp, text, 'utf8');
+  await fs.promises.rename(tmp, file);
+}
+
 // Pastas de dados e relatórios: padrão dentro do projeto; DATA_DIR e REPORTS_DIR (absolutos ou relativos à raiz
 // do projeto) permitem mudar o lugar, por exemplo numa VPS.
 export function dataPaths(rootDir, source = process.env) {

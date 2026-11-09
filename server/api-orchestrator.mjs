@@ -41,6 +41,11 @@ export function createOrchestratorRouter({ orchestrator, dataDir }) {
     res.json(result);
   }));
 
+  // Cancela o trabalho em andamento (varredura, plano; limpeza só enquanto espera a confirmação)
+  router.post('/jobs/cancel', route(async (req, res) => {
+    res.json(orchestrator.cancelJob());
+  }));
+
   // Cancelamento da limpeza interativa
   router.post('/jobs/clean/cancel', route(async (req, res) => {
     const result = orchestrator.cancelClean();

@@ -395,7 +395,7 @@ export function createOrchestrator({ rootDir, onNotification = null }) {
     child.on('close', (code) => {
       job.finishedAt = new Date().toISOString();
       job.exitCode = code;
-      if (job.status === 'waiting_confirmation') {
+      if (job.status === 'waiting_confirmation' || job.status === 'cancelling') {
         job.status = 'cancelled';
       } else if (job.status !== 'cancelled') {
         // A varredura sai com 1 (alertas altos) ou 2 (críticos) quando termina normalmente com achados: não é falha.
@@ -506,6 +506,31 @@ export function createOrchestrator({ rootDir, onNotification = null }) {
     return { ok: true, message: 'Limpeza cancelada' };
   }
 
+  // Cancela o trabalho em andamento. Varredura e plano só leem (o state.json e o plano só são gravados no fim), então
+  // encerrar o processo no meio não deixa nada pela metade. A limpeza só é cancelável enquanto espera a confirmação:
+  // aplicando alterações, o banco desfaria a transação, mas arquivos já apagados não voltariam.
+  const CANCELLABLE = new Set(['scan', 'scan_full', 'plan']);
+  function cancelJob() {
+    if (!currentJob) throw httpError(400, 'Nenhum trabalho em andamento.');
+    if (currentJob.type === 'clean') {
+      if (currentJob.status === 'waiting_confirmation') return cancelClean();
+      throw httpError(409, 'A limpeza já está aplicando alterações e não pode ser interrompida no meio. Aguarde terminar.');
+    }
+    if (!CANCELLABLE.has(currentJob.type)) throw httpError(409, `${currentJob.label} não pode ser cancelado(a) no meio.`);
+    const job = currentJob;
+    if (job.status === 'cancelling') return { ok: true, message: `${job.label}: cancelamento já em andamento.` };
+    // "cancelling" mantém o trabalho ativo até o processo sair de fato (vira "cancelled" no close); assim o painel
+    // não oferece um novo disparo que o servidor recusaria.
+    job.status = 'cancelling';
+    broadcast('job', getRuntime().job);
+    appendLog('job', `Cancelamento solicitado: encerrando ${job.label}...`, 'stdout');
+    try { job.child.kill('SIGTERM'); } catch {}
+    // O monitor trata SIGTERM terminando o ciclo (comportamento do modo contínuo): para cancelar, força em 2 s. O
+    // state.json só é gravado no fim do ciclo, de forma atômica, então nada fica pela metade.
+    setTimeout(() => { try { job.child.kill('SIGKILL'); } catch {} }, 2000).unref();
+    return { ok: true, message: `${job.label}: cancelando...` };
+  }
+
   // Roteador SSE para /api/events
   function sseHandler(req, res) {
     res.setHeader('Content-Type', 'text/event-stream');
@@ -545,6 +570,7 @@ export function createOrchestrator({ rootDir, onNotification = null }) {
     runJob,
     confirmClean,
     cancelClean,
+    cancelJob,
     sseHandler,
     broadcast,
     setNotificationHandler: (fn) => {
