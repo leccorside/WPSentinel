@@ -352,8 +352,15 @@ reconhecida vão para revisão manual). Todo arquivo apagado pela limpeza tem c�
 Pastas de plugin e tema maliciosas conhecidas (lista `MALICIOUS_PLUGIN` e temas `category_template_17781NNNNN`
 em `src/clean.mjs`) são apagadas inteiras, porque desativar não basta: os webshells dentro delas respondem por URL
 direta. Antes de apagar, a pasta é baixada para o backup e a contagem de arquivos é conferida; se não bater, nada é
-apagado. Um tema só é apagado se não for o tema ativo (`template`/`stylesheet` no banco). Plugins legítimos usados
-pelo invasor (`code-snippets`, `fileorganizer`) só são desativados e vão para revisão manual.
+apagado. Um tema só é apagado se não for o tema ativo (`template`/`stylesheet` no banco). `code-snippets` e
+`fileorganizer` também são apagados (legítimos no repositório, mas usados pelo invasor). Plugins **parecidos** ainda
+desconhecidos também entram: pelo nome no padrão do kit (sufixo hexadecimal, número de data `17781NNNNN`,
+`cloudflare-vN-NN`) ou, em plugins pequenos (até 5 itens, sem subpastas) e `.php` soltos em `plugins/`, pelo
+conteúdo (código ofuscado controlado pela requisição, ou que se esconde da lista de plugins).
+
+**Usuários permitidos por site** (Configurações › Conexões › editar site): com a lista preenchida, a limpeza exclui
+qualquer outro login do WordPress, sem revisão manual. O conteúdo do excluído é transferido para o primeiro usuário
+permitido e os usuários vão para o backup. Se nenhum login da lista existir no banco, nada é excluído.
 
 Na Central de Limpeza do painel, cada item de revisão manual mostra o motivo real, o nome e o caminho do arquivo
 ou pasta. Quando o item aponta para um arquivo ou pasta, há o botão **Excluir**: o painel faz o backup, apaga e

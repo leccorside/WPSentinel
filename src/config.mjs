@@ -118,7 +118,15 @@ export function sanitizeSite(s) {
       ssl: Boolean(s.db?.ssl),
     },
     spamContentSince: s.spamContentSince || null,
+    // Logins WordPress permitidos no site. Se a lista existir, a limpeza exclui qualquer outro usuário (o conteúdo
+    // dele é transferido para o primeiro permitido). Vazia = regra da baseline.
+    allowedUsers: normalizeLogins(s.allowedUsers),
   };
+}
+
+export function normalizeLogins(value) {
+  const list = Array.isArray(value) ? value : String(value || '').split(/[,;\s]+/);
+  return [...new Set(list.map((login) => String(login).trim()).filter(Boolean))];
 }
 
 export function saveSites(sites, dataDir = null) {

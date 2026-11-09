@@ -30,6 +30,7 @@ export function SiteConfigModal({
       prefix: s?.db?.prefix || 'wp_',
       ssl: Boolean(s?.db?.ssl),
     },
+    allowedUsers: (s?.allowedUsers || []).join(', '),
   });
 
   const [formData, setFormData] = useState(() => initialFormState(site));
@@ -385,6 +386,24 @@ export function SiteConfigModal({
                     />
                     <span>Conexão SSL/TLS</span>
                   </label>
+                </div>
+
+                <div className="sm:col-span-3">
+                  <label className="block text-xs font-mono text-outline mb-1">
+                    Usuários WordPress permitidos (logins separados por vírgula)
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.allowedUsers}
+                    onChange={(e) => setFormData({ ...formData, allowedUsers: e.target.value })}
+                    placeholder="ex.: luizhenrique"
+                    className="w-full px-3.5 py-2 bg-surface-container-lowest border border-outline-variant/40 rounded-lg text-xs font-mono text-on-surface outline-none focus:border-primary"
+                  />
+                  <span className={`text-[10px] font-mono ${formData.allowedUsers.trim() ? 'text-amber-300' : 'text-outline-variant'}`}>
+                    {formData.allowedUsers.trim()
+                      ? 'A limpeza vai EXCLUIR qualquer outro usuário (conteúdo transferido para o primeiro da lista; backup dos usuários).'
+                      : 'Vazio: só usuários fora da baseline confiável são excluídos.'}
+                  </span>
                 </div>
               </div>
             )}

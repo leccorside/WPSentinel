@@ -25,9 +25,13 @@ const ALERT_FILE = path.join(DATA_DIR, 'alerts.jsonl');
 const PLAN_FILE = path.join(DATA_DIR, 'last-cleanup-plan.json');
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
 const MALICIOUS_PLUGIN = /^(vapor-curator-tap|pulse-beacon-ops|cloudflare-v2-23|script-4aec0f13-4aec0f13|wordpress-site-editor-e64d0d1c|wp-security-helper|smart-toolkit-plus|database-framework-edition|performance-fix-pro|smart-fix-edition|system-fix-plus|smart-cleaner-plus|smart-fix-pro|core-manager-plus|seo-patch-max|classic-cleaner-bundle|core-scanner-standard|wpueditors|fileorganizer|code-snippets|seo-framework-x|visual-scanner-edition)$|^(gallery|security|custom|widget)[_-]17781\d{5}$/;
-// Plugins legítimos (repositório oficial) que o invasor instalou como ferramenta: são desativados, mas a pasta não é
-// apagada automaticamente, porque o cliente pode usá-los. Ficam na revisão manual.
-const ABUSED_LEGIT_PLUGINS = new Set(['code-snippets', 'fileorganizer']);
+// Todos os da lista acima são apagados na limpeza, inclusive code-snippets e fileorganizer (legítimos no repositório,
+// mas usados pelo invasor): decisão do responsável em 09/11/2026, sem revisão manual.
+// Plugins "parecidos" ainda desconhecidos: nome no padrão do kit (sufixo hexadecimal de 8 dígitos, timestamp
+// 17781NNNNN, cloudflare-vN-NN) ou plugin pequeno cujo código é ofuscado e controlado pela requisição / se esconde.
+const SUSPICIOUS_PLUGIN_NAME = /[-_][0-9a-f]{8}(?:-[0-9a-f]{8})?$|[-_]1[5-9]\d{8}$|^cloudflare-v\d+-\d+$/i;
+const SMALL_PLUGIN_ENTRIES = 5;
+const MAX_INSPECTED_PHP = 300 * 1024;
 // Temas falsos do mesmo kit (ex.: category_template_1778142327, com webshells archlve.php e *_obfuscated_*.php).
 const MALICIOUS_THEME = /^category_template_17781\d{5}$/;
 // Logins criados pelo invasor, confirmados pelo responsável (09/11/2026: ninguém conhece "default_john_from_usa").
@@ -69,6 +73,8 @@ const lastCleanupOf = lastCleanupFinder(alerts);
 const pendingAlerts = alerts.filter((event, index) => event.message !== 'cleanup_completed'
   && index > lastCleanupOf(event.site)
   && (!SITE_KEY || event.site === SITE_KEY));
+// Plugins marcados na busca por arquivos (lista conhecida ou parecidos), por site: também saem da lista de ativos.
+const flaggedPlugins = new Map();
 const plan = {
   createdAt: new Date().toISOString(), scope: SITE_KEY ? [SITE_KEY] : null,
   fileActions: [], databaseActions: [], manualReview: [],
@@ -137,6 +143,10 @@ plan.fileActions = plan.fileActions.filter((action) => {
   return false;
 });
 
+// Cada varredura repete os alertas que continuam valendo (ex.: links ocultos na home): na revisão manual fica um item
+// por problema, o mais recente, com os mesmos campos que distinguem itens no painel (makeItemKey).
+const reviewKey = (item) => [item.site, item.message, item.details?.path, item.details?.header, item.details?.visto_como, item.details?.status, item.details?.hook, item.details?.postId].join('|');
+plan.manualReview = [...new Map(plan.manualReview.map((item) => [reviewKey(item), item])).values()];
 plan.fileActions = uniqueActions(plan.fileActions);
 plan.databaseActions = uniqueActions(plan.databaseActions);
 plan.id = crypto.createHash('sha256').update(JSON.stringify(plan)).digest('hex').slice(0, 10).toUpperCase();
@@ -264,7 +274,23 @@ async function inspectDatabaseForCleanup(site, trustedSite) {
     );
     const trustedUsers = new Map((trustedSite.users || []).map((user) => [String(user.id), user]));
     const unexpectedUsers = [];
-    for (const user of users) {
+    const allowed = new Set((site.allowedUsers || []).map((login) => login.toLowerCase()));
+    if (allowed.size) {
+      // Lista de permitidos configurada no site: ela manda (não a baseline). Qualquer outro login é excluído e o
+      // conteúdo dele vai para o primeiro permitido existente. Sem nenhum permitido no banco, nada é excluído.
+      const keep = users.filter((u) => allowed.has(String(u.user_login).toLowerCase()));
+      const remove = users.filter((u) => !allowed.has(String(u.user_login).toLowerCase()));
+      if (!keep.length) {
+        manualReview.push({ severity: 'critical', site: site.key, message: 'Nenhum usuário da lista de permitidos existe no banco; exclusão de usuários não proposta', details: { logins: [...allowed] } });
+      } else if (remove.length) {
+        actions.push({
+          type: 'delete_users', site: site.key, ids: remove.map((u) => Number(u.ID)), logins: remove.map((u) => u.user_login),
+          allowlist: true, keepLogins: keep.map((u) => u.user_login), reassignTo: Number(keep[0].ID),
+          reason: `Fora da lista de usuários permitidos (${keep.map((u) => u.user_login).join(', ')}); conteúdo transferido para ${keep[0].user_login}`,
+        });
+      }
+    }
+    for (const user of allowed.size ? [] : users) {
       const id = String(user.ID);
       const trusted = trustedUsers.get(id);
       if (!trusted) unexpectedUsers.push(user);
@@ -279,7 +305,9 @@ async function inspectDatabaseForCleanup(site, trustedSite) {
       }
     }
     const usersAction = (list, reason) => ({ type: 'delete_users', site: site.key, ids: list.map((u) => Number(u.ID)), logins: list.map((u) => u.user_login), reason });
-    if (trustedUsers.size) {
+    if (allowed.size) {
+      // Já tratado pela lista de permitidos.
+    } else if (trustedUsers.size) {
       if (unexpectedUsers.length) actions.push(usersAction(unexpectedUsers, 'Usuários ausentes da baseline confiável'));
     } else {
       // Sem usuários na baseline confiável, todos pareceriam "novos" (inclusive os administradores legítimos): só os
@@ -336,7 +364,11 @@ async function inspectDatabaseForCleanup(site, trustedSite) {
     // Plugins maliciosos ainda listados como ativos (os arquivos já foram removidos).
     const [[activeRow]] = await connection.query(`SELECT option_value FROM \`${prefix}options\` WHERE option_name = 'active_plugins'`);
     const activePlugins = Object.values(unserialize(String(activeRow?.option_value || 'a:0:{}')));
-    const badActive = activePlugins.filter((file) => MALICIOUS_PLUGIN.test(String(file).split('/')[0]));
+    const flagged = flaggedPlugins.get(site.key) || new Set();
+    const badActive = activePlugins.filter((file) => {
+      const slug = String(file).split('/')[0].replace(/\.php$/i, '');
+      return MALICIOUS_PLUGIN.test(slug) || flagged.has(slug);
+    });
     if (badActive.length) {
       actions.push({ type: 'remove_malicious_active_plugins', site: site.key, plugins: badActive, reason: `${badActive.length} plugin(s) malicioso(s) na lista de ativos` });
     }
@@ -452,13 +484,16 @@ async function inspectMalwareMarkers() {
           const dir = `${site.remoteRoot}/wp-content/${kind}`;
           if (!await sftp.exists(dir)) continue;
           for (const entry of await sftp.list(dir)) {
-            if (entry.type !== 'd' || !isMalicious(entry.name)) continue;
             const rel = `wp-content/${kind}/${entry.name}`;
-            if (kind === 'plugins' && ABUSED_LEGIT_PLUGINS.has(entry.name)) {
-              plan.manualReview.push({ severity: 'high', site: site.key, message: `Plugin legítimo usado pelo invasor (${entry.name}): a limpeza o desativa; se o cliente não o usa, exclua a pasta (com backup)`, details: { path: rel } });
-              continue;
+            if (entry.type === 'd' && isMalicious(entry.name)) {
+              actions.push({ type: 'delete_directory', site: site.key, path: rel, reason: kind === 'plugins' ? 'Plugin malicioso conhecido' : 'Tema malicioso conhecido' });
+              if (kind === 'plugins') flagPlugin(site, entry.name);
+            } else if (kind === 'plugins') {
+              const suspicion = await suspiciousPlugin(sftp, `${dir}/${entry.name}`, entry);
+              if (!suspicion) continue;
+              actions.push({ type: entry.type === 'd' ? 'delete_directory' : 'delete_file', site: site.key, path: rel, reason: `Plugin parecido com o malware (${suspicion})` });
+              flagPlugin(site, entry.name.replace(/\.php$/i, ''));
             }
-            actions.push({ type: 'delete_directory', site: site.key, path: rel, reason: kind === 'plugins' ? 'Plugin malicioso conhecido' : 'Tema malicioso conhecido' });
           }
         }
       } catch (error) {
@@ -470,6 +505,40 @@ async function inspectMalwareMarkers() {
     await pool.close();
   }
   return actions;
+}
+
+// Plugin fora da lista conhecida que se parece com o kit do malware: pelo nome, ou (se for pequeno: até
+// SMALL_PLUGIN_ENTRIES itens, sem subpastas; ou um .php solto em plugins/) pelo conteúdo dos PHP. Devolve o motivo.
+async function suspiciousPlugin(sftp, remote, entry) {
+  if (entry.type === 'd') {
+    if (SUSPICIOUS_PLUGIN_NAME.test(entry.name)) return 'nome no padrão do malware';
+    const entries = await sftp.list(remote);
+    if (entries.length > SMALL_PLUGIN_ENTRIES || entries.some((e) => e.type === 'd')) return null;
+    for (const file of entries.filter((e) => e.type === '-' && /\.php$/i.test(e.name) && e.size <= MAX_INSPECTED_PHP)) {
+      const reason = malwareSignals(normalizeBuffer(await sftp.get(`${remote}/${file.name}`)).toString('latin1'));
+      if (reason) return `${file.name}: ${reason}`;
+    }
+    return null;
+  }
+  if (entry.type === '-' && /\.php$/i.test(entry.name) && !/^(?:index|hello)\.php$/i.test(entry.name) && entry.size <= MAX_INSPECTED_PHP) {
+    const reason = malwareSignals(normalizeBuffer(await sftp.get(remote)).toString('latin1'));
+    return reason ? `${entry.name}: ${reason}` : null;
+  }
+  return null;
+}
+
+// Sinais fortes do kit (todos os plugins falsos do drlui614 batem em pelo menos um).
+function malwareSignals(text) {
+  if (/all_plugins|pre_current_active_plugins|Stealth Mode/i.test(text)) return 'se esconde da lista de plugins';
+  const obfuscated = /gzinflate|gzuncompress|str_rot13|\beval\s*\(|create_function/i.test(text);
+  if (obfuscated && /\$_(?:POST|GET|REQUEST|COOKIE)\b/.test(text)) return 'código ofuscado controlado pela requisição';
+  if (obfuscated && text.split('\n').some((line) => line.length > 2000)) return 'código ofuscado em linha gigante';
+  return null;
+}
+
+function flagPlugin(site, slug) {
+  if (!flaggedPlugins.has(site.key)) flaggedPlugins.set(site.key, new Set());
+  flaggedPlugins.get(site.key).add(slug);
 }
 
 // Uma conexão SFTP por credencial, aberta sob demanda e uma de cada vez (sites na mesma hospedagem
@@ -563,20 +632,42 @@ async function executeDatabaseActions(actions, completed) {
       for (const action of siteActions) {
         if (action.type === 'delete_users') {
           const ids = action.ids.map(Number).filter(Number.isInteger);
-          const trustedIds = new Set((baseline.sites?.[site.key]?.users || []).map((user) => Number(user.id)));
-          if (!ids.length || ids.some((id) => trustedIds.has(id))) throw new Error('Tentativa de remover usuário da baseline recusada');
-          const [posts] = await connection.query(`SELECT ID FROM \`${prefix}posts\` WHERE post_author IN (?)`, [ids]);
-          const postIds = posts.map((post) => Number(post.ID));
-          if (postIds.length) {
-            await connection.query(`DELETE FROM \`${prefix}term_relationships\` WHERE object_id IN (?)`, [postIds]);
-            await connection.query(`DELETE FROM \`${prefix}postmeta\` WHERE post_id IN (?)`, [postIds]);
-            await connection.query(`DELETE FROM \`${prefix}posts\` WHERE ID IN (?)`, [postIds]);
+          if (!ids.length) throw new Error('Exclusão de usuários sem IDs recusada');
+          if (action.allowlist) {
+            // Reconfere no banco, dentro da transação: nenhum excluído é permitido e o destino do conteúdo é permitido.
+            const allowedNow = new Set((site.allowedUsers || []).map((login) => login.toLowerCase()));
+            const [rows] = await connection.query(`SELECT ID, user_login FROM \`${prefix}users\` WHERE ID IN (?) FOR UPDATE`, [[...ids, action.reassignTo]]);
+            if (rows.some((row) => ids.includes(Number(row.ID)) && allowedNow.has(String(row.user_login).toLowerCase()))) {
+              throw new Error('Exclusão recusada: um dos usuários está na lista de permitidos');
+            }
+            const target = rows.find((row) => Number(row.ID) === Number(action.reassignTo));
+            if (!target || !allowedNow.has(String(target.user_login).toLowerCase())) throw new Error('Exclusão recusada: usuário de destino do conteúdo não é permitido ou não existe');
+          } else {
+            const trustedIds = new Set((baseline.sites?.[site.key]?.users || []).map((user) => Number(user.id)));
+            if (ids.some((id) => trustedIds.has(id))) throw new Error('Tentativa de remover usuário da baseline recusada');
           }
-          await connection.query(
-            `DELETE cm FROM \`${prefix}commentmeta\` cm INNER JOIN \`${prefix}comments\` c ON c.comment_ID = cm.comment_id WHERE c.user_id IN (?)`,
-            [ids],
-          );
-          await connection.query(`DELETE FROM \`${prefix}comments\` WHERE user_id IN (?)`, [ids]);
+          const [userRows] = await connection.query(`SELECT * FROM \`${prefix}users\` WHERE ID IN (?)`, [ids]);
+          const [userMeta] = await connection.query(`SELECT * FROM \`${prefix}usermeta\` WHERE user_id IN (?)`, [ids]);
+          await writeBackup(site, 'usuarios', { users: userRows, usermeta: userMeta, reassignTo: action.reassignTo || null });
+          if (action.reassignTo) {
+            // Usuário legítimo sobrando: o conteúdo dele fica no site, com o autor permitido.
+            await connection.query(`UPDATE \`${prefix}posts\` SET post_author = ? WHERE post_author IN (?)`, [action.reassignTo, ids]);
+            await connection.query(`UPDATE \`${prefix}comments\` SET user_id = ? WHERE user_id IN (?)`, [action.reassignTo, ids]);
+          } else {
+            // Usuário do invasor: o conteúdo dele é spam e sai junto.
+            const [posts] = await connection.query(`SELECT ID FROM \`${prefix}posts\` WHERE post_author IN (?)`, [ids]);
+            const postIds = posts.map((post) => Number(post.ID));
+            if (postIds.length) {
+              await connection.query(`DELETE FROM \`${prefix}term_relationships\` WHERE object_id IN (?)`, [postIds]);
+              await connection.query(`DELETE FROM \`${prefix}postmeta\` WHERE post_id IN (?)`, [postIds]);
+              await connection.query(`DELETE FROM \`${prefix}posts\` WHERE ID IN (?)`, [postIds]);
+            }
+            await connection.query(
+              `DELETE cm FROM \`${prefix}commentmeta\` cm INNER JOIN \`${prefix}comments\` c ON c.comment_ID = cm.comment_id WHERE c.user_id IN (?)`,
+              [ids],
+            );
+            await connection.query(`DELETE FROM \`${prefix}comments\` WHERE user_id IN (?)`, [ids]);
+          }
           await connection.query(`DELETE FROM \`${prefix}usermeta\` WHERE user_id IN (?)`, [ids]);
           await connection.query(`DELETE FROM \`${prefix}users\` WHERE ID IN (?)`, [ids]);
         } else if (action.type === 'delete_application_passwords') {
@@ -610,7 +701,8 @@ async function executeDatabaseActions(actions, completed) {
           const [rows] = await connection.query(`SELECT option_value FROM \`${prefix}options\` WHERE option_name = 'active_plugins' FOR UPDATE`);
           await writeBackup(site, 'plugins-ativos', rows);
           const current = Object.values(unserialize(String(rows[0]?.option_value || 'a:0:{}')));
-          const kept = [...new Set(current.filter((file) => !MALICIOUS_PLUGIN.test(String(file).split('/')[0])))];
+          const removed = new Set(action.plugins || []);
+          const kept = [...new Set(current.filter((file) => !removed.has(file) && !MALICIOUS_PLUGIN.test(String(file).split('/')[0])))];
           await connection.query(`UPDATE \`${prefix}options\` SET option_value = ? WHERE option_name = 'active_plugins'`, [serialize(kept)]);
         } else if (action.type === 'delete_malicious_snippets') {
           const [rows] = await connection.query(`SELECT * FROM \`${prefix}snippets\` WHERE id IN (?)`, [action.ids]);

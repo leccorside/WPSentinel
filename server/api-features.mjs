@@ -333,6 +333,7 @@ export function createFeaturesRouter({ paths, orchestrator = null }) {
           hasPassword: Boolean(s.db?.password),
         },
         spamContentSince: s.spamContentSince,
+        allowedUsers: s.allowedUsers || [],
       })),
     });
   }));
@@ -379,6 +380,8 @@ export function createFeaturesRouter({ paths, orchestrator = null }) {
         ssl: Boolean(data.db?.ssl),
       },
       spamContentSince: data.spamContentSince || null,
+      // Mantém a lista atual quando o formulário não a envia.
+      allowedUsers: data.allowedUsers !== undefined ? data.allowedUsers : existing?.allowedUsers || [],
     });
 
     let updatedList;
