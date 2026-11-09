@@ -14,6 +14,7 @@ import { MARKER_DIRS, isMalwareMarker } from './malware-markers.mjs';
 import { assertSftp, connectSftpWithRetry, dataPaths, loadSites, sftpKey } from './config.mjs';
 import { classifyPhp, isCacheRootPhp, isDropin } from './dropins.mjs';
 import { appendSection, bullet, dateBR, number, timeBR } from './report.mjs';
+import { selectSites, siteArg } from './scope.mjs';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(SCRIPT_DIR, '..');
@@ -31,7 +32,11 @@ const FULL_HASH_EVERY = Math.max(1, Number(process.env.FULL_HASH_EVERY || 24));
 const MAX_DOWNLOAD_BYTES = Math.max(1024, Number(process.env.MAX_DOWNLOAD_BYTES || 8 * 1024 * 1024));
 
 // Sites, caminhos, bancos e acessos vêm do .env (ver src/config.mjs).
-const sites = loadSites();
+// --site=<chave> limita a varredura a um site; o estado dos demais fica intacto no state.json. Não vale para
+// --reset-baseline, que recria a baseline inteira e apagaria a dos outros sites.
+const SITE_KEY = siteArg();
+if (SITE_KEY && RESET_BASELINE) throw new Error('--reset-baseline não aceita --site: a baseline é refeita para todos os sites.');
+const sites = selectSites(loadSites(), SITE_KEY);
 
 const monitoredExtensions = new Set([
   '.php', '.php3', '.php4', '.php5', '.php7', '.php8', '.phtml', '.phar', '.phps',
@@ -131,7 +136,7 @@ async function runCycle() {
     return connections.get(id);
   };
 
-  console.log(`\n[${new Date().toLocaleString('pt-BR')}] Ciclo ${cycle}`);
+  console.log(`\n[${new Date().toLocaleString('pt-BR')}] Ciclo ${cycle}${SITE_KEY ? ` (só ${SITE_KEY})` : ''}`);
 
   // Cada site é verificado de forma isolada (ver o laço abaixo).
   const scanSite = async (site) => {
@@ -679,7 +684,7 @@ async function writeScanReport(startedAt, seconds, result) {
   const summary = [
     `Duração: ${seconds} segundos (ciclo nº ${cycle} do monitor)`,
     `Sites verificados: ${sites.map((s) => `${s.name} (${new URL(s.url).hostname})`).join(', ')}`,
-    `Modo: ${ONCE ? 'varredura única (run-scan)' : 'monitor contínuo (ciclo com alertas)'}; nenhuma alteração é feita nos sites.`,
+    `Modo: ${ONCE ? 'varredura única (run-scan)' : 'monitor contínuo (ciclo com alertas)'}${SITE_KEY ? `, só o site ${SITE_KEY}` : ''}; nenhuma alteração é feita nos sites.`,
     '',
     result.critical || result.high
       ? `RESULTADO: ${result.critical} ALERTA(S) CRÍTICO(S) E ${result.high} ALTO(S)`

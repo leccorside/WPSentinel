@@ -6,6 +6,7 @@ import { Sidebar } from './components/layout/Sidebar';
 import { Footer } from './components/layout/Footer';
 import { LiveTerminalModal } from './components/common/LiveTerminalModal';
 import { DoubleCheckModal } from './components/common/DoubleCheckModal';
+import { SiteScopeModal } from './components/common/SiteScopeModal';
 import { OverviewView } from './views/OverviewView';
 import { ScannerView } from './views/ScannerView';
 import { CleanupView } from './views/CleanupView';
@@ -254,15 +255,26 @@ export default function App() {
     setOverview(null);
   };
 
-  const triggerJob = async (type) => {
+  // site: chave de um site ou null (todos).
+  const triggerJob = async (type, site = null) => {
     try {
       setIsTerminalOpen(true);
-      await api.jobs.run(type);
+      await api.jobs.run(type, site);
       loadData();
     } catch (err) {
       setToastMessage({ type: 'error', text: err.message });
     }
   };
+
+  // Antes de varredura e plano, pergunta o escopo: todos os sites ou um só.
+  const SCOPE_REQUESTS = {
+    scan: { title: 'Disparar varredura', icon: 'radar', confirmLabel: 'Iniciar varredura', description: 'Verifica arquivos, HTTP e banco. Não altera nada nos sites.' },
+    scan_full: { title: 'Varredura com hash completo', icon: 'fingerprint', confirmLabel: 'Revalidar hashes', description: 'Baixa e recalcula o hash de todos os arquivos monitorados (mais lenta). Não altera nada nos sites.' },
+    plan: { title: 'Gerar plano de limpeza', icon: 'cleaning_services', confirmLabel: 'Gerar plano', description: 'Monta o plano sem alterar nada. A execução usa o mesmo escopo do plano.' },
+  };
+  const [scopeRequest, setScopeRequest] = useState(null);
+  const askScope = (type, extra = {}) => setScopeRequest({ type, ...SCOPE_REQUESTS[type], ...extra });
+  const planScope = plan?.plan?.scope?.[0] || null;
 
   const triggerMonitor = async (action) => {
     try {
@@ -439,6 +451,20 @@ export default function App() {
         </div>
       )}
 
+      {/* Escolha do escopo (todos os sites ou um) antes de varredura e plano */}
+      <SiteScopeModal
+        key={scopeRequest ? `${scopeRequest.type}-${selectedSite}` : 'fechado'}
+        request={scopeRequest}
+        sites={sitesList}
+        defaultSite={selectedSite}
+        onClose={() => setScopeRequest(null)}
+        onConfirm={(site) => {
+          const request = scopeRequest;
+          triggerJob(request.type, site);
+          request.onAfter?.();
+        }}
+      />
+
       {/* Header */}
       <Header
         sites={sitesList}
@@ -447,8 +473,11 @@ export default function App() {
         monitorState={status?.monitor?.state || 'stopped'}
         monitorCycle={status?.monitor?.cycle || 0}
         pendingPlanActions={plan?.summary?.actions || 0}
-        onTriggerScan={() => triggerJob('scan')}
-        onOpenCleanup={() => setActiveView('cleanup')}
+        onTriggerScan={() => askScope('scan')}
+        onOpenCleanup={() => askScope('plan', {
+          onAfter: () => setActiveView('cleanup'),
+          extraOption: { label: 'Só abrir a Central de Limpeza', onClick: () => setActiveView('cleanup') },
+        })}
         onOpenReports={() => setActiveView('reports')}
         onOpenTerminal={() => setIsTerminalOpen(true)}
         authRequired={authStatus.required}
@@ -479,8 +508,8 @@ export default function App() {
               statusData={status}
               selectedSite={selectedSite}
               onSelectSite={setSelectedSite}
-              onTriggerScan={() => triggerJob('scan')}
-              onTriggerFullScan={() => triggerJob('scan_full')}
+              onTriggerScan={() => askScope('scan')}
+              onTriggerFullScan={() => askScope('scan_full')}
               onOpenCleanup={() => setActiveView('cleanup')}
               onTriggerMonitor={triggerMonitor}
             />
@@ -491,8 +520,8 @@ export default function App() {
               sites={sitesList}
               selectedSite={selectedSite}
               onSelectSite={setSelectedSite}
-              onTriggerScan={() => triggerJob('scan')}
-              onTriggerFullScan={() => triggerJob('scan_full')}
+              onTriggerScan={() => askScope('scan')}
+              onTriggerFullScan={() => askScope('scan_full')}
               overviewData={overview}
               statusData={status}
             />
@@ -501,8 +530,8 @@ export default function App() {
           {activeView === 'cleanup' && (
             <CleanupView
               planData={plan}
-              onTriggerPlan={() => triggerJob('plan')}
-              onExecuteClean={() => triggerJob('clean')}
+              onTriggerPlan={() => askScope('plan')}
+              onExecuteClean={() => triggerJob('clean', planScope)}
               isExecuting={currentJob?.status === 'running'}
               onOpenTerminal={() => setIsTerminalOpen(true)}
               onReloadPlan={loadData}

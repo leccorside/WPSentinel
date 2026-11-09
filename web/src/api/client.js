@@ -64,7 +64,8 @@ export const api = {
     executiveDownloadUrl: () => '/api/reports/executive/download',
   },
   jobs: {
-    run: (type) => request('/api/jobs/run', { method: 'POST', body: JSON.stringify({ type }) }),
+    // site: chave de um site ou null/'all' para todos.
+    run: (type, site = null) => request('/api/jobs/run', { method: 'POST', body: JSON.stringify({ type, site }) }),
     current: () => request('/api/jobs/current'),
     confirmClean: (code) => request('/api/jobs/clean/confirm', { method: 'POST', body: JSON.stringify({ code }) }),
     cancelClean: () => request('/api/jobs/clean/cancel', { method: 'POST' }),
@@ -89,6 +90,8 @@ export const api = {
     list: () => request('/api/manual-review'),
     mark: (key, reviewed, notes = '') =>
       request('/api/manual-review/mark', { method: 'POST', body: JSON.stringify({ key, reviewed, notes }) }),
+    remove: (key, confirmation) =>
+      request('/api/manual-review/delete', { method: 'POST', body: JSON.stringify({ key, confirmation }) }),
   },
   notifications: {
     list: () => request('/api/notifications'),

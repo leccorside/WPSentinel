@@ -1,6 +1,7 @@
 // Leitura dos arquivos gravados pelo motor (.monitor-data e reports). Só leitura: nada aqui altera dados.
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { lastCleanupFinder } from '../src/scope.mjs';
 
 // state.json e trusted-baseline.json passam de 3 MB: cada arquivo é relido só quando muda (mtime + tamanho).
 const cache = new Map();
@@ -30,16 +31,17 @@ export const readState = (dataDir) => readJson(path.join(dataDir, 'state.json'))
 export const readBaseline = (dataDir) => readJson(path.join(dataDir, 'trusted-baseline.json'));
 export const readPlan = (dataDir) => readJson(path.join(dataDir, 'last-cleanup-plan.json'));
 
-// Alertas com a mesma regra da limpeza: "pendente" = depois do último cleanup_completed.
+// Alertas com a mesma regra da limpeza: "pendente" = depois da última limpeza que cobriu o site do alerta
+// (src/scope.mjs). lastCleanupOf(site) devolve a posição dessa limpeza no alerts.jsonl.
 export async function readAlerts(dataDir) {
   const { value, modifiedAt } = await readJsonLines(path.join(dataDir, 'alerts.jsonl'));
   const alerts = value || [];
   const lastCleanupIndex = alerts.findLastIndex((event) => event.message === 'cleanup_completed');
-  return { alerts, lastCleanupIndex, lastCleanup: alerts[lastCleanupIndex] || null, modifiedAt };
+  return { alerts, lastCleanupIndex, lastCleanupOf: lastCleanupFinder(alerts), lastCleanup: alerts[lastCleanupIndex] || null, modifiedAt };
 }
 
-export const isPendingAlert = (alert, lastCleanupIndex) =>
-  alert.id > lastCleanupIndex && (alert.severity === 'critical' || alert.severity === 'high');
+export const isPendingAlert = (alert, lastCleanupOf) =>
+  alert.id > lastCleanupOf(alert.site) && (alert.severity === 'critical' || alert.severity === 'high');
 
 // ---------------------------------------------------------------------------------------------------------------
 // Integridade: estado atual comparado com a baseline confiável, arquivo por arquivo.

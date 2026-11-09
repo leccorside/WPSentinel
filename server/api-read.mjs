@@ -17,8 +17,8 @@ export function createReadRouter({ paths, getRuntime = () => ({ monitor: { state
   const route = (handler) => (req, res, next) => Promise.resolve(handler(req, res)).catch(next);
 
   router.get('/status', route(async (req, res) => {
-    const [{ value: state }, { alerts, lastCleanupIndex, lastCleanup }] = await Promise.all([readState(dataDir), readAlerts(dataDir)]);
-    const pending = alerts.filter((alert) => isPendingAlert(alert, lastCleanupIndex));
+    const [{ value: state }, { alerts, lastCleanupOf, lastCleanup }] = await Promise.all([readState(dataDir), readAlerts(dataDir)]);
+    const pending = alerts.filter((alert) => isPendingAlert(alert, lastCleanupOf));
     res.json({
       now: new Date().toISOString(),
       ...getRuntime(),
@@ -31,9 +31,9 @@ export function createReadRouter({ paths, getRuntime = () => ({ monitor: { state
 
   router.get('/overview', route(async (req, res) => {
     const env = readEnvFile() || {};
-    const [{ value: state }, { value: baseline }, { alerts, lastCleanupIndex }] = await Promise.all([readState(dataDir), readBaseline(dataDir), readAlerts(dataDir)]);
+    const [{ value: state }, { value: baseline }, { alerts, lastCleanupOf }] = await Promise.all([readState(dataDir), readBaseline(dataDir), readAlerts(dataDir)]);
     const summaries = sites(env).map((site) => summarizeSite(site, state?.sites?.[site.key], baseline?.sites?.[site.key]));
-    const pending = alerts.filter((alert) => isPendingAlert(alert, lastCleanupIndex));
+    const pending = alerts.filter((alert) => isPendingAlert(alert, lastCleanupOf));
     const interval = Math.max(30, Number(env.INTERVAL_SECONDS || 300));
     const fullHashEvery = Math.max(1, Number(env.FULL_HASH_EVERY || 24));
     const cycle = Number(state?.cycle || 0);
@@ -58,14 +58,14 @@ export function createReadRouter({ paths, getRuntime = () => ({ monitor: { state
   }));
 
   router.get('/alerts', route(async (req, res) => {
-    const { alerts, lastCleanupIndex } = await readAlerts(dataDir);
+    const { alerts, lastCleanupIndex, lastCleanupOf } = await readAlerts(dataDir);
     const names = new Map(sites().map((site) => [site.key, site.name]));
     const severities = list(req.query.severity);
     const q = String(req.query.q || '').trim().toLowerCase();
     const filtered = alerts.filter((alert) =>
       (!req.query.site || alert.site === req.query.site)
       && (!severities.length || severities.includes(alert.severity))
-      && (req.query.pending !== '1' || isPendingAlert(alert, lastCleanupIndex))
+      && (req.query.pending !== '1' || isPendingAlert(alert, lastCleanupOf))
       && (!q || `${alert.message} ${alertContext(alert.details)}`.toLowerCase().includes(q)));
     const { offset, limit } = page(req.query, 50, 500);
     res.json({
@@ -77,8 +77,8 @@ export function createReadRouter({ paths, getRuntime = () => ({ monitor: { state
       items: filtered.slice().reverse().slice(offset, offset + limit).map((alert) => ({
         ...alert,
         siteName: names.get(alert.site) || (alert.site === 'monitor' ? 'Monitor' : alert.site),
-        pending: isPendingAlert(alert, lastCleanupIndex),
-        afterLastCleanup: alert.id > lastCleanupIndex,
+        pending: isPendingAlert(alert, lastCleanupOf),
+        afterLastCleanup: alert.id > lastCleanupOf(alert.site),
         context: alertContext(alert.details),
       })),
     });
@@ -158,7 +158,7 @@ export function createReadRouter({ paths, getRuntime = () => ({ monitor: { state
     } catch {}
     const manualReview = (plan.manualReview || []).map((item) => {
       const key = makeItemKey(item);
-      return { ...item, key, reviewed: Boolean(reviewedMap[key]) };
+      return { ...item, key, reviewed: Boolean(reviewedMap[key]), reviewedNotes: reviewedMap[key]?.notes || null };
     });
     const actions = [...(plan.fileActions || []), ...(plan.databaseActions || [])];
     const byType = {};

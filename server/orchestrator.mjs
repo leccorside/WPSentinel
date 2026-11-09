@@ -27,6 +27,8 @@ export const JOB_SPECS = {
   reset_baseline: {
     label: 'Redefinir baseline',
     args: ['src/monitor.mjs', '--reset-baseline', '--once'],
+    // A baseline é refeita para todos os sites; por site apagaria a dos outros.
+    allSitesOnly: true,
   },
 };
 
@@ -289,10 +291,18 @@ export function createOrchestrator({ rootDir, onNotification = null }) {
   }
 
   // Execução de trabalho ad-hoc (varredura, plano, limpeza ou reset)
-  async function runJob(type) {
+  // site: chave de um site cadastrado (só ele) ou vazio (todos). Validada contra a lista de sites antes de virar
+  // argumento do processo.
+  async function runJob(type, { site = null, siteName = null } = {}) {
     const spec = JOB_SPECS[type];
     if (!spec) {
       throw httpError(400, `Tipo de trabalho inválido: ${type}`);
+    }
+    if (site && spec.allSitesOnly) {
+      throw httpError(400, `${spec.label} só pode ser feita para todos os sites.`);
+    }
+    if (site && !/^[a-z0-9_-]+$/.test(site)) {
+      throw httpError(400, `Site inválido: ${site}`);
     }
 
     if (currentJob) {
@@ -319,7 +329,7 @@ export function createOrchestrator({ rootDir, onNotification = null }) {
     }
 
     const env = { ...process.env, ...(readEnvFile() || {}) };
-    const child = spawn(process.execPath, spec.args, {
+    const child = spawn(process.execPath, site ? [...spec.args, `--site=${site}`] : spec.args, {
       cwd: rootDir,
       env,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -328,7 +338,8 @@ export function createOrchestrator({ rootDir, onNotification = null }) {
     const job = {
       id: `job-${Date.now()}-${type}`,
       type,
-      label: spec.label,
+      label: `${spec.label} — ${site ? (siteName || site) : 'todos os sites'}`,
+      site,
       status: 'running',
       startedAt: new Date().toISOString(),
       finishedAt: null,
@@ -387,10 +398,13 @@ export function createOrchestrator({ rootDir, onNotification = null }) {
       if (job.status === 'waiting_confirmation') {
         job.status = 'cancelled';
       } else if (job.status !== 'cancelled') {
-        job.status = code === 0 ? 'completed' : 'failed';
+        // A varredura sai com 1 (alertas altos) ou 2 (críticos) quando termina normalmente com achados: não é falha.
+        const scanWithAlerts = (job.type === 'scan' || job.type === 'scan_full') && (code === 1 || code === 2);
+        job.status = code === 0 || scanWithAlerts ? 'completed' : 'failed';
+        job.alerts = scanWithAlerts ? (code === 2 ? 'critical' : 'high') : null;
       }
 
-      appendLog('job', `Trabalho ${job.label} finalizado com status ${job.status} (código ${code})`, 'stdout');
+      appendLog('job', `Trabalho ${job.label} finalizado com status ${job.status} (código ${code}${job.alerts ? `: concluído com alertas ${job.alerts === 'critical' ? 'críticos' : 'altos'}` : ''})`, 'stdout');
       lastJob = { ...job, child: null };
       currentJob = null;
       broadcast('job', getRuntime().job);
@@ -398,9 +412,11 @@ export function createOrchestrator({ rootDir, onNotification = null }) {
       if (job.status === 'completed') {
         notify({
           type: 'job_completed',
-          title: 'Trabalho Concluído',
-          message: `${job.label} concluído com sucesso.`,
-          severity: 'info',
+          title: job.alerts ? 'Varredura concluída com alertas' : 'Trabalho Concluído',
+          message: job.alerts
+            ? `${job.label} concluída: encontrou alertas ${job.alerts === 'critical' ? 'críticos' : 'altos'}.`
+            : `${job.label} concluído com sucesso.`,
+          severity: job.alerts || 'info',
           site: 'sistema',
           details: { type: job.type, exitCode: code },
         });

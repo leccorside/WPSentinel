@@ -69,8 +69,8 @@ app.post('/api/notifications/read', async (req, res, next) => {
 });
 
 app.use('/api/auth', auth.authRouter);
-app.use('/api', createFeaturesRouter({ paths: settings.paths }));
-app.use('/api', createOrchestratorRouter({ orchestrator }));
+app.use('/api', createFeaturesRouter({ paths: settings.paths, orchestrator }));
+app.use('/api', createOrchestratorRouter({ orchestrator, dataDir: settings.paths.dataDir }));
 app.use('/api', createReadRouter({ paths: settings.paths, getRuntime: orchestrator.getRuntime }));
 app.use('/api', (req, res) => res.status(404).json({ error: 'Rota não encontrada' }));
 

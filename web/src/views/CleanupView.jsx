@@ -43,6 +43,35 @@ function timeAgo(dateInput) {
   }
 }
 
+// Título, caminho (pasta + nome) e fatos de um item de revisão manual. Os itens vêm de alertas e do plano, com
+// detalhes diferentes por tipo (arquivo, cabeçalho, usuários, links ocultos...).
+function describeReviewItem(item) {
+  const d = item.details || {};
+  const path = typeof d.path === 'string' && d.path ? d.path : null;
+  const isDirectory = Boolean(path && /^wp-content\/(?:plugins|themes)\/[^/]+$/.test(path));
+  const facts = [];
+  if (d.header) facts.push(`Cabeçalho ausente: ${d.header}`);
+  if (d.visto_como) facts.push(`Visto como: ${d.visto_como}`);
+  if (d.status !== undefined) facts.push(`HTTP ${d.status}`);
+  if (Array.isArray(d.dominios) && d.dominios.length) facts.push(`Domínios: ${d.dominios.slice(0, 6).join(', ')}${d.dominios.length > 6 ? ` (+${d.dominios.length - 6})` : ''}`);
+  if (d.links) facts.push(`${d.links} link(s)${d.blocos ? ` em ${d.blocos} bloco(s)` : ''}`);
+  if (d.titulo) facts.push(`Página: "${d.titulo}"${d.postId ? ` (ID ${d.postId})` : ''}`);
+  if (Array.isArray(d.logins) && d.logins.length) facts.push(`Usuários: ${d.logins.join(', ')}`);
+  else if (Array.isArray(d.ids) && d.ids.length) facts.push(`IDs: ${d.ids.join(', ')}`);
+  if (d.login) facts.push(`Login: ${d.login}${d.ip ? ` (${d.ip})` : ''}`);
+  if (d.currentLogin) facts.push(`Usuário: ${d.currentLogin}${d.currentEmail ? ` <${d.currentEmail}>` : ''}`);
+  if (d.total !== undefined) facts.push(`Total: ${d.total}`);
+  if (d.hook) facts.push(`Hook: ${d.hook}`);
+  if (d.size !== undefined) facts.push(`Tamanho: ${d.size} bytes`);
+  return {
+    title: item.message || item.reason || 'Item de revisão manual',
+    path,
+    name: path ? path.split('/').pop() : null,
+    isDirectory,
+    facts,
+  };
+}
+
 export function CleanupView({
   planData,
   onTriggerPlan,
@@ -61,6 +90,10 @@ export function CleanupView({
   const [backupsData, setBackupsData] = useState({ plans: [], others: [] });
   const [backupsLoading, setBackupsLoading] = useState(false);
   const [markingKey, setMarkingKey] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleteCode, setDeleteCode] = useState('');
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
   const [jsonModalOpen, setJsonModalOpen] = useState(false);
   const [copiedPhrase, setCopiedPhrase] = useState(false);
   const [copiedJson, setCopiedJson] = useState(false);
@@ -108,6 +141,27 @@ export function CleanupView({
     }
   };
 
+  // Exclusão manual (com backup) do arquivo/pasta de um item de revisão. Mesmo código do servidor: EXCLUIR-<chave>.
+  const deleteCodeFor = (item) => `EXCLUIR-${String(item?.key || '').slice(0, 6).toUpperCase()}`;
+
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setDeleteError('');
+    try {
+      const res = await api.manualReview.remove(deleteTarget.key, deleteCode.trim());
+      setToastMessage({ type: 'success', text: `${res.kind === 'pasta' ? 'Pasta' : 'Arquivo'} ${res.path} apagado(a). Backup em ${res.backup}/.` });
+      setDeleteTarget(null);
+      setDeleteCode('');
+      if (onReloadPlan) onReloadPlan();
+      loadBackups();
+    } catch (err) {
+      setDeleteError(err.message);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const confirmationCode = plan?.id ? `LIMPAR-${plan.id}` : '';
 
   const handleCopyCode = () => {
@@ -132,6 +186,62 @@ export function CleanupView({
 
   return (
     <div className="flex flex-col gap-6">
+      {/* Modal de confirmação da exclusão manual (sem window.confirm: código digitado, como na limpeza) */}
+      {deleteTarget && (() => {
+        const info = describeReviewItem(deleteTarget);
+        const expected = deleteCodeFor(deleteTarget);
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md">
+            <div className="w-full max-w-lg bg-surface-container-low border border-error/60 rounded-xl shadow-2xl p-6 flex flex-col gap-4">
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-error">delete_forever</span>
+                <h3 className="font-headline font-bold text-base text-on-surface">
+                  Excluir {info.isDirectory ? 'pasta' : 'arquivo'} do servidor
+                </h3>
+              </div>
+              <div className="p-3 rounded bg-surface-container font-mono text-xs flex flex-col gap-1">
+                <span><span className="text-outline">Site: </span>{deleteTarget.site}</span>
+                <span><span className="text-outline">Nome: </span><span className="text-error font-semibold break-all">{info.name}</span></span>
+                <span><span className="text-outline">Caminho: </span><span className="text-primary break-all">{info.path}</span></span>
+                <span><span className="text-outline">Motivo: </span>{info.title}</span>
+              </div>
+              <p className="font-sans text-xs text-on-surface-variant">
+                {info.isDirectory ? 'A pasta inteira é baixada' : 'O arquivo é baixado'} para <code>.monitor-data/backups/</code> antes de ser apagado
+                {info.isDirectory ? ' (a contagem de arquivos do backup é conferida; se não bater, nada é apagado)' : ''}.
+                A exclusão fica registrada no relatório do dia. Para confirmar, digite <code className="text-error font-semibold">{expected}</code>.
+              </p>
+              <input
+                type="text"
+                autoFocus
+                value={deleteCode}
+                onChange={(e) => setDeleteCode(e.target.value)}
+                placeholder={expected}
+                className="w-full px-3.5 py-2 bg-surface-container-lowest border border-outline-variant/40 rounded-lg text-xs font-mono text-on-surface outline-none focus:border-error"
+              />
+              {deleteError && <p className="font-mono text-xs text-error">{deleteError}</p>}
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  disabled={deleting}
+                  onClick={() => setDeleteTarget(null)}
+                  className="px-3 py-1.5 rounded-lg font-headline text-xs font-semibold bg-surface-container hover:bg-surface-container-high text-on-surface-variant cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  disabled={deleting || deleteCode.trim() !== expected}
+                  onClick={handleConfirmDelete}
+                  className="px-3 py-1.5 rounded-lg font-headline text-xs font-semibold bg-error text-on-error disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  {deleting ? 'Apagando (com backup)...' : `Excluir ${info.isDirectory ? 'pasta' : 'arquivo'}`}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Toast Notification */}
       {toastMessage && (
         <div
@@ -178,6 +288,15 @@ export function CleanupView({
               {plan?.id && (
                 <span className="px-2 py-0.5 bg-surface-container-high text-on-surface-variant font-mono text-xs rounded border border-outline-variant/30">
                   ID: <strong className="text-primary font-semibold">PLANO-{plan.id}</strong>
+                </span>
+              )}
+
+              {plan?.id && (
+                <span
+                  title="A execução usa o mesmo escopo deste plano"
+                  className="px-2 py-0.5 bg-surface-container-high text-on-surface-variant font-mono text-xs rounded border border-outline-variant/30"
+                >
+                  Escopo: <strong className="text-secondary font-semibold">{plan.scope?.length ? plan.scope.join(', ') : 'todos os sites'}</strong>
                 </span>
               )}
 
@@ -446,7 +565,7 @@ export function CleanupView({
                       <div className="flex items-start gap-3">
                         <div className="w-8 h-8 rounded bg-error-container/20 text-error flex items-center justify-center shrink-0 mt-0.5">
                           <span className="material-symbols-outlined text-base">
-                            {action.action === 'restore' ? 'settings_backup_restore' : 'delete_sweep'}
+                            {action.action === 'restore' ? 'settings_backup_restore' : action.type === 'delete_directory' ? 'folder_delete' : 'delete_sweep'}
                           </span>
                         </div>
                         <div className="flex flex-col gap-1">
@@ -454,7 +573,9 @@ export function CleanupView({
                             <span className="font-headline font-bold text-sm text-on-surface">
                               {action.action === 'restore'
                                 ? 'Restauração de Arquivo Canônico da Baseline'
-                                : 'Exclusão de Marcadores de Malware e Arquivos Temporários'}
+                                : action.type === 'delete_directory'
+                                ? `Remoção de ${action.path?.includes('/themes/') ? 'Tema' : 'Plugin'} Malicioso (pasta inteira)`
+                                : 'Exclusão de Arquivo Malicioso'}
                             </span>
                             <span className="px-2 py-0.5 bg-error-container text-on-error-container font-mono text-[10px] uppercase rounded">
                               {action.action === 'restore' ? 'Restaurar' : 'Excluir'}
@@ -466,7 +587,7 @@ export function CleanupView({
                             )}
                           </div>
                           <p className="font-sans text-xs text-on-surface-variant leading-relaxed">
-                            {action.description ||
+                            {action.description || action.reason ||
                               `Exclusão física do artefato não catalogado na baseline oficial do WordPress ou restauração do hash canônico.`}
                           </p>
                         </div>
@@ -531,6 +652,7 @@ export function CleanupView({
               <div className="flex flex-col gap-3">
                 {manualReview.map((item, idx) => {
                   const isMarking = markingKey === item.key;
+                  const info = describeReviewItem(item);
                   return (
                     <div
                       key={item.key || `hitl-${idx}`}
@@ -553,20 +675,36 @@ export function CleanupView({
                               {item.reviewed ? 'verified' : 'unknown_document'}
                             </span>
                           </div>
-                          <div>
-                            <div className="flex items-center gap-2">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
                               <h3 className="font-headline font-bold text-sm text-on-surface">
-                                {item.reason || 'Arquivo não catalogado na baseline canônica'}
+                                {info.title}
                               </h3>
+                              {item.severity && (
+                                <span className={`px-2 py-0.5 rounded font-mono text-[10px] uppercase font-bold ${
+                                  item.severity === 'critical' ? 'bg-error-container text-on-error-container' : 'bg-amber-400/15 text-amber-300'
+                                }`}>
+                                  {item.severity === 'critical' ? 'Crítico' : item.severity === 'high' ? 'Alto' : item.severity}
+                                </span>
+                              )}
                               {item.reviewed && (
                                 <span className="px-2 py-0.5 rounded bg-secondary/15 text-secondary font-mono text-[10px] uppercase font-bold">
                                   Revisado
                                 </span>
                               )}
                             </div>
-                            <p className="font-mono text-xs text-primary truncate max-w-lg mt-0.5">
-                              {item.path || item.key}
-                            </p>
+                            {info.path ? (
+                              <div className="mt-1 font-mono text-xs flex flex-col gap-0.5">
+                                <span><span className="text-outline">Nome: </span><span className="text-error font-semibold break-all">{info.name}</span></span>
+                                <span><span className="text-outline">Caminho: </span><span className="text-primary break-all">{info.path}</span></span>
+                              </div>
+                            ) : null}
+                            {info.facts.length > 0 && (
+                              <ul className="mt-1 font-mono text-[11px] text-on-surface-variant flex flex-col gap-0.5">
+                                {info.facts.map((fact) => <li key={fact} className="break-all">• {fact}</li>)}
+                              </ul>
+                            )}
+                            {item.reason && <p className="mt-1 font-sans text-xs text-amber-300">{item.reason}</p>}
                           </div>
                         </div>
 
@@ -581,10 +719,23 @@ export function CleanupView({
                       <div className="flex items-center justify-between pt-2 border-t border-outline-variant/20 flex-wrap gap-2">
                         <span className="font-sans text-xs text-on-surface-variant">
                           {item.reviewed
-                            ? 'Este item foi aprovado para permanência pela equipe de SecOps.'
-                            : 'Analise o arquivo via SFTP antes de marcar como revisado.'}
+                            ? item.reviewedNotes || 'Item marcado como revisado no painel.'
+                            : info.path
+                            ? 'Confira o arquivo antes: apague (com backup) ou marque como revisado para manter.'
+                            : 'Não é um arquivo: resolva no site/servidor e depois marque como revisado.'}
                         </span>
 
+                        <div className="flex items-center gap-2">
+                        {info.path && !item.reviewed && (
+                          <button
+                            type="button"
+                            onClick={() => { setDeleteTarget(item); setDeleteCode(''); setDeleteError(''); }}
+                            className="px-3 py-1.5 rounded-lg font-headline text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer bg-error-container text-on-error-container hover:opacity-90"
+                          >
+                            <span className="material-symbols-outlined text-sm">delete</span>
+                            <span>Excluir {info.isDirectory ? 'pasta' : 'arquivo'}</span>
+                          </button>
+                        )}
                         <button
                           type="button"
                           disabled={isMarking}
@@ -606,6 +757,7 @@ export function CleanupView({
                               : 'Marcar como Revisado'}
                           </span>
                         </button>
+                        </div>
                       </div>
                     </div>
                   );

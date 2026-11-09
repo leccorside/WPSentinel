@@ -15,6 +15,7 @@ import { MARKER_DIRS, isMalwareMarker } from './malware-markers.mjs';
 import { assertSftp, connectSftpWithRetry, dataPaths, loadSites, sftpKey } from './config.mjs';
 import { DROPIN_FILES, classifyPhp, isCacheRootPhp, isDropin } from './dropins.mjs';
 import { appendSection, bullet, dateBR, timeBR } from './report.mjs';
+import { lastCleanupFinder, selectSites, siteArg } from './scope.mjs';
 
 const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const { dataDir: DATA_DIR, reportsDir: REPORTS_DIR } = dataPaths(ROOT_DIR);
@@ -23,11 +24,21 @@ const BASELINE_FILE = path.join(DATA_DIR, 'trusted-baseline.json');
 const ALERT_FILE = path.join(DATA_DIR, 'alerts.jsonl');
 const PLAN_FILE = path.join(DATA_DIR, 'last-cleanup-plan.json');
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
-const MALICIOUS_PLUGIN = /^(vapor-curator-tap|pulse-beacon-ops|cloudflare-v2-23|script-4aec0f13-4aec0f13|wordpress-site-editor-e64d0d1c|wp-security-helper|smart-toolkit-plus|database-framework-edition|performance-fix-pro|smart-fix-edition|system-fix-plus|smart-cleaner-plus|smart-fix-pro|core-manager-plus|seo-patch-max|classic-cleaner-bundle|core-scanner-standard|wpueditors|fileorganizer|code-snippets)$|^(gallery|security|custom|widget)[_-]17781\d{5}$/;
+const MALICIOUS_PLUGIN = /^(vapor-curator-tap|pulse-beacon-ops|cloudflare-v2-23|script-4aec0f13-4aec0f13|wordpress-site-editor-e64d0d1c|wp-security-helper|smart-toolkit-plus|database-framework-edition|performance-fix-pro|smart-fix-edition|system-fix-plus|smart-cleaner-plus|smart-fix-pro|core-manager-plus|seo-patch-max|classic-cleaner-bundle|core-scanner-standard|wpueditors|fileorganizer|code-snippets|seo-framework-x|visual-scanner-edition)$|^(gallery|security|custom|widget)[_-]17781\d{5}$/;
+// Plugins legítimos (repositório oficial) que o invasor instalou como ferramenta: são desativados, mas a pasta não é
+// apagada automaticamente, porque o cliente pode usá-los. Ficam na revisão manual.
+const ABUSED_LEGIT_PLUGINS = new Set(['code-snippets', 'fileorganizer']);
+// Temas falsos do mesmo kit (ex.: category_template_1778142327, com webshells archlve.php e *_obfuscated_*.php).
+const MALICIOUS_THEME = /^category_template_17781\d{5}$/;
+// Logins criados pelo invasor, confirmados pelo responsável (09/11/2026: ninguém conhece "default_john_from_usa").
+const MALICIOUS_LOGINS = /^default_john_from_usa$/i;
+const REMOVABLE_DIRECTORY = /^wp-content\/(?:plugins|themes)\/[^/]+$/;
 const PLAN_ONLY = process.argv.includes('--plan');
 
 // Sites, caminhos, bancos e acessos vêm do .env (ver src/config.mjs).
-const sites = loadSites();
+// --site=<chave> limita o plano (e a execução) a um site; o painel passa o mesmo escopo nas duas etapas.
+const SITE_KEY = siteArg();
+const sites = selectSites(loadSites(), SITE_KEY);
 
 const automaticFileMessages = new Set([
   'Arquivo PHP encontrado dentro de uploads',
@@ -52,9 +63,16 @@ if (!baseline) {
 }
 
 const alerts = await readJsonLines(ALERT_FILE);
-const lastCleanupIndex = alerts.findLastIndex((event) => event.message === 'cleanup_completed');
-const pendingAlerts = alerts.slice(lastCleanupIndex + 1);
-const plan = { createdAt: new Date().toISOString(), fileActions: [], databaseActions: [], manualReview: [] };
+// Pendente = depois da última limpeza que cobriu o site do alerta. Com --site, alertas de outros sites (e os gerais
+// do monitor) ficam fora deste plano.
+const lastCleanupOf = lastCleanupFinder(alerts);
+const pendingAlerts = alerts.filter((event, index) => event.message !== 'cleanup_completed'
+  && index > lastCleanupOf(event.site)
+  && (!SITE_KEY || event.site === SITE_KEY));
+const plan = {
+  createdAt: new Date().toISOString(), scope: SITE_KEY ? [SITE_KEY] : null,
+  fileActions: [], databaseActions: [], manualReview: [],
+};
 
 // Alertas de infraestrutura e conectividade não são artefatos maliciosos para limpeza de arquivos.
 const ignoredInPlanMessages = new Set([
@@ -92,6 +110,7 @@ for (const alert of pendingAlerts) {
 
 plan.fileActions.push(...await inspectMalwareMarkers());
 
+const activeThemes = new Map();
 for (const site of sites) {
   if (!site.db.enabled) continue;
   // Um banco inacessível vai para revisão manual e não impede o plano dos demais sites.
@@ -99,10 +118,24 @@ for (const site of sites) {
     const dbPlan = await inspectDatabaseForCleanup(site, baseline.sites?.[site.key] || {});
     plan.databaseActions.push(...dbPlan.actions);
     plan.manualReview.push(...dbPlan.manualReview);
+    activeThemes.set(site.key, dbPlan.activeThemes);
   } catch (error) {
     plan.manualReview.push({ severity: 'critical', site: site.key, message: `Banco do site não verificado: ${error.code || error.message}` });
   }
 }
+
+// Tema nunca é apagado sem saber qual está ativo: apagar o tema em uso derruba o site.
+plan.fileActions = plan.fileActions.filter((action) => {
+  const theme = action.type === 'delete_directory' && action.path.match(/^wp-content\/themes\/([^/]+)$/)?.[1];
+  if (!theme) return true;
+  const active = activeThemes.get(action.site);
+  if (active && !active.includes(theme)) return true;
+  plan.manualReview.push({
+    severity: 'critical', site: action.site, details: { path: action.path },
+    message: active ? 'Tema malicioso é o tema ativo; troque o tema antes de apagar' : 'Tema malicioso não removido: tema ativo desconhecido (banco não verificado)',
+  });
+  return false;
+});
 
 plan.fileActions = uniqueActions(plan.fileActions);
 plan.databaseActions = uniqueActions(plan.databaseActions);
@@ -118,7 +151,7 @@ if (!actionCount) {
 }
 
 if (PLAN_ONLY) {
-  console.log(`\nPlano somente-leitura. Para executar, rode run-cleanup.cmd e digite LIMPAR-${plan.id}.`);
+  console.log(`\nPlano somente-leitura. Para executar, use "Executar plano" na Central de Limpeza do painel (ou run-cleanup.cmd) e digite o código de confirmação que aparecer.`);
   process.exit(0);
 }
 
@@ -146,7 +179,7 @@ await writeCleanReport('executada', { completed, verification });
 
 const event = {
   timestamp: new Date().toISOString(), severity: 'info', site: 'monitor',
-  message: 'cleanup_completed', details: { planId: plan.id, completed, verification },
+  message: 'cleanup_completed', details: { planId: plan.id, sites: sites.map((s) => s.key), completed, verification },
 };
 await fs.appendFile(ALERT_FILE, `${JSON.stringify(event)}\n`, 'utf8');
 console.log(`\nLimpeza ${plan.id} concluída: ${completed.length} ação(ões). Execute a varredura novamente para validar.`);
@@ -155,15 +188,15 @@ console.log(`\nLimpeza ${plan.id} concluída: ${completed.length} ação(ões). 
 async function writeCleanReport(status, { completed = [], verification = [], error = null } = {}) {
   try {
     const labels = {
-      delete_file: 'Arquivo removido', delete_users: 'Usuários excluídos', delete_application_passwords: 'Application Passwords removidas',
+      delete_file: 'Arquivo removido', delete_directory: 'Pasta removida', delete_users: 'Usuários excluídos', delete_application_passwords: 'Application Passwords removidas',
       destroy_sessions: 'Sessões de login encerradas', disable_registration: 'Cadastro público desativado', delete_wpse_option: 'Opção wpse_user_id removida',
       restore_url: 'Endereço do site restaurado', remove_known_cron_hooks: 'Tarefas maliciosas removidas do WP-Cron', delete_malicious_options: 'Opções do malware removidas',
       remove_malicious_active_plugins: 'Plugins maliciosos retirados da lista de ativos', delete_malicious_snippets: 'Snippets maliciosos removidos',
       delete_spam_content: 'Spam removido', remove_hidden_links: 'Links externos ocultos removidos', delete_spam_revisions: 'Revisões com spam removidas',
     };
     const describe = (a) => {
-      const extra = a.type === 'delete_file' ? `${a.path} (${a.reason})`
-        : a.type === 'delete_users' ? `IDs ${a.ids.join(', ')}`
+      const extra = a.type === 'delete_file' || a.type === 'delete_directory' ? `${a.path} (${a.reason})`
+        : a.type === 'delete_users' ? `${a.logins?.length ? `${a.logins.join(', ')} — ` : ''}IDs ${a.ids.join(', ')}`
           : a.type === 'remove_known_cron_hooks' ? a.hooks.join(', ')
             : a.type === 'remove_malicious_active_plugins' ? a.plugins.join(', ')
               : a.reason;
@@ -230,23 +263,33 @@ async function inspectDatabaseForCleanup(site, trustedSite) {
       [`${prefix}capabilities`],
     );
     const trustedUsers = new Map((trustedSite.users || []).map((user) => [String(user.id), user]));
-    const unexpectedUserIds = [];
+    const unexpectedUsers = [];
     for (const user of users) {
       const id = String(user.ID);
       const trusted = trustedUsers.get(id);
-      if (!trusted) unexpectedUserIds.push(Number(user.ID));
-      else if (trusted.login !== user.user_login || trusted.email !== user.user_email || trusted.capabilities !== user.capabilities) {
+      if (!trusted) unexpectedUsers.push(user);
+      else if (MALICIOUS_LOGINS.test(user.user_login)) {
+        // Está na baseline: a exclusão automática recusaria (proteção dos usuários confiáveis).
+        manualReview.push({ severity: 'critical', site: site.key, message: 'Login do invasor está na baseline confiável; exclua manualmente e refaça a baseline', details: { id, login: user.user_login } });
+      } else if (trusted.login !== user.user_login || trusted.email !== user.user_email || trusted.capabilities !== user.capabilities) {
         manualReview.push({
           severity: 'critical', site: site.key, message: 'Usuário existente alterado; restauração manual necessária',
           details: { id, currentLogin: user.user_login, currentEmail: user.user_email },
         });
       }
     }
-    // Sem usuários na baseline confiável, todos pareceriam "novos" (inclusive os administradores legítimos).
-    if (unexpectedUserIds.length && !trustedUsers.size) {
-      manualReview.push({ severity: 'high', site: site.key, message: 'Site sem usuários na baseline confiável; exclusão de usuários não proposta', details: { ids: unexpectedUserIds } });
-    } else if (unexpectedUserIds.length) {
-      actions.push({ type: 'delete_users', site: site.key, ids: unexpectedUserIds, reason: 'Usuários ausentes da baseline confiável' });
+    const usersAction = (list, reason) => ({ type: 'delete_users', site: site.key, ids: list.map((u) => Number(u.ID)), logins: list.map((u) => u.user_login), reason });
+    if (trustedUsers.size) {
+      if (unexpectedUsers.length) actions.push(usersAction(unexpectedUsers, 'Usuários ausentes da baseline confiável'));
+    } else {
+      // Sem usuários na baseline confiável, todos pareceriam "novos" (inclusive os administradores legítimos): só os
+      // logins confirmados como do invasor são excluídos; o resto vai para revisão manual.
+      const malicious = unexpectedUsers.filter((u) => MALICIOUS_LOGINS.test(u.user_login));
+      const others = unexpectedUsers.filter((u) => !MALICIOUS_LOGINS.test(u.user_login));
+      if (malicious.length) actions.push(usersAction(malicious, 'Login criado pelo invasor (confirmado pelo responsável)'));
+      if (others.length) {
+        manualReview.push({ severity: 'high', site: site.key, message: 'Site sem usuários na baseline confiável; exclusão dos demais usuários não proposta', details: { ids: others.map((u) => Number(u.ID)), logins: others.map((u) => u.user_login) } });
+      }
     }
 
     const [[appPasswords]] = await connection.query(
@@ -262,7 +305,7 @@ async function inspectDatabaseForCleanup(site, trustedSite) {
 
     const [options] = await connection.query(
       `SELECT option_name, option_value FROM \`${prefix}options\`
-       WHERE option_name IN ('users_can_register', 'siteurl', 'home', 'wpse_user_id', 'cron')`,
+       WHERE option_name IN ('users_can_register', 'siteurl', 'home', 'wpse_user_id', 'cron', 'template', 'stylesheet')`,
     );
     const optionMap = Object.fromEntries(options.map((row) => [row.option_name, String(row.option_value || '')]));
     if (optionMap.users_can_register === '1') actions.push({ type: 'disable_registration', site: site.key, reason: 'Cadastro público ativo' });
@@ -355,7 +398,9 @@ async function inspectDatabaseForCleanup(site, trustedSite) {
     if (spamRevisions.length) {
       actions.push({ type: 'delete_spam_revisions', site: site.key, ids: spamRevisions, reason: `${spamRevisions.length} revisão(ões) com links ocultos` });
     }
-    return { actions, manualReview };
+    // Tema pai e tema filho em uso: o plano nunca apaga um deles.
+    const activeThemes = [optionMap.template, optionMap.stylesheet].filter(Boolean);
+    return { actions, manualReview, activeThemes };
   } finally {
     await connection.end();
   }
@@ -399,6 +444,21 @@ async function inspectMalwareMarkers() {
             actions.push({ type: 'delete_file', site: site.key, path: rel, reason: `${isDropin(rel) ? 'Drop-in malicioso' : 'PHP malicioso em wp-content/cache'} (${reason})` });
           } else if (verdict === 'unknown') {
             plan.manualReview.push({ severity: 'high', site: site.key, message: `${isDropin(rel) ? 'Drop-in' : 'PHP em wp-content/cache'} sem origem reconhecida; confira antes de apagar`, details: { path: rel } });
+          }
+        }
+        // Pastas de plugin/tema maliciosas: desativar não basta, porque os webshells dentro delas respondem por URL
+        // direta. São apagadas inteiras (com backup); um tema só depois de confirmar que não é o ativo.
+        for (const [kind, isMalicious] of [['plugins', (name) => MALICIOUS_PLUGIN.test(name)], ['themes', (name) => MALICIOUS_THEME.test(name)]]) {
+          const dir = `${site.remoteRoot}/wp-content/${kind}`;
+          if (!await sftp.exists(dir)) continue;
+          for (const entry of await sftp.list(dir)) {
+            if (entry.type !== 'd' || !isMalicious(entry.name)) continue;
+            const rel = `wp-content/${kind}/${entry.name}`;
+            if (kind === 'plugins' && ABUSED_LEGIT_PLUGINS.has(entry.name)) {
+              plan.manualReview.push({ severity: 'high', site: site.key, message: `Plugin legítimo usado pelo invasor (${entry.name}): a limpeza o desativa; se o cliente não o usa, exclua a pasta (com backup)`, details: { path: rel } });
+              continue;
+            }
+            actions.push({ type: 'delete_directory', site: site.key, path: rel, reason: kind === 'plugins' ? 'Plugin malicioso conhecido' : 'Tema malicioso conhecido' });
           }
         }
       } catch (error) {
@@ -460,6 +520,23 @@ async function executeFileActions(actions, completed) {
       if (!site || !isSafeRemoteRelativePath(action.path)) throw new Error('Caminho remoto inseguro recusado');
       const sftp = await pool.get(site);
       const remotePath = `${site.remoteRoot}/${action.path}`.replace(/\/+/g, '/');
+      if (action.type === 'delete_directory') {
+        if (!REMOVABLE_DIRECTORY.test(action.path)) throw new Error(`Pasta fora de wp-content/plugins|themes recusada: ${action.path}`);
+        if (await sftp.exists(remotePath) !== 'd') continue;
+        // Backup da pasta inteira, conferido arquivo a arquivo pela contagem, antes de apagar.
+        const local = path.join(BACKUP_DIR, `${plan.id}-${site.key}-arquivos`, ...action.path.split('/'));
+        const remoteFiles = await countRemoteFiles(sftp, remotePath);
+        await fs.mkdir(local, { recursive: true });
+        await sftp.downloadDir(remotePath, local);
+        const localFiles = await countLocalFiles(local);
+        if (localFiles !== remoteFiles) {
+          throw new Error(`Backup incompleto de ${action.path} (${localFiles} de ${remoteFiles} arquivos); a pasta não foi apagada`);
+        }
+        await sftp.rmdir(remotePath, true);
+        completed.push(action);
+        console.log(`Pasta removida: ${site.name}/${action.path} (${remoteFiles} arquivo(s) no backup)`);
+        continue;
+      }
       if (await sftp.exists(remotePath)) {
         // Backup do arquivo antes de apagar: .monitor-data/backups/<plano>-<site>-arquivos/<caminho>.
         const local = path.join(BACKUP_DIR, `${plan.id}-${site.key}-arquivos`, ...action.path.split('/'));
@@ -638,8 +715,8 @@ async function verifyPublishedPages(actions) {
 }
 
 function printPlan(value) {
-  console.log(`\nPlano ${value.id}`);
-  for (const action of value.fileActions) console.log(`  [ARQUIVO] excluir ${action.site}/${action.path} — ${action.reason}`);
+  console.log(`\nPlano ${value.id} — ${value.scope ? `só o site ${value.scope.join(', ')}` : 'todos os sites'}`);
+  for (const action of value.fileActions) console.log(`  [${action.type === 'delete_directory' ? 'PASTA' : 'ARQUIVO'}] excluir ${action.site}/${action.path} — ${action.reason}`);
   for (const action of value.databaseActions) console.log(`  [BANCO] ${action.site}: ${action.type} — ${action.reason}`);
   if (value.manualReview.length) {
     console.log(`\nRevisão manual (${value.manualReview.length}):`);
@@ -650,7 +727,7 @@ function printPlan(value) {
 function uniqueActions(actions) {
   const seen = new Set();
   return actions.filter((action) => {
-    const key = action.type === 'delete_file'
+    const key = action.type === 'delete_file' || action.type === 'delete_directory'
       ? `${action.type}|${action.site}|${action.path}`
       : action.type === 'delete_users'
         ? `${action.type}|${action.site}|${[...action.ids].sort((a, b) => a - b).join(',')}`
@@ -659,6 +736,21 @@ function uniqueActions(actions) {
     seen.add(key);
     return true;
   });
+}
+
+// Arquivos comuns numa pasta remota, recursivamente (links e especiais não entram: o backup não os copia, então
+// uma pasta com eles nunca passa na conferência e não é apagada).
+async function countRemoteFiles(sftp, dir) {
+  let total = 0;
+  for (const entry of await sftp.list(dir)) {
+    if (entry.type === 'd') total += await countRemoteFiles(sftp, `${dir}/${entry.name}`);
+    else if (entry.type === '-') total += 1;
+  }
+  return total;
+}
+
+async function countLocalFiles(dir) {
+  return (await fs.readdir(dir, { withFileTypes: true, recursive: true })).filter((entry) => entry.isFile()).length;
 }
 
 function isSafeRemoteRelativePath(value) {

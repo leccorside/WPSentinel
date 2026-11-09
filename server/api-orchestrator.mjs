@@ -1,7 +1,9 @@
 // Rotas de controle de processos (Passo 4): disparar trabalhos, confirmação da limpeza, monitor e SSE.
 import express from 'express';
+import { loadSites } from '../src/config.mjs';
+import { readEnvFile } from './config.mjs';
 
-export function createOrchestratorRouter({ orchestrator }) {
+export function createOrchestratorRouter({ orchestrator, dataDir }) {
   const router = express.Router();
   const route = (handler) => (req, res, next) => Promise.resolve(handler(req, res)).catch(next);
 
@@ -11,9 +13,19 @@ export function createOrchestratorRouter({ orchestrator }) {
   });
 
   // Disparo de trabalho (scan, scan_full, plan, clean, reset_baseline)
+  // site (opcional): chave de um site cadastrado; vazio ou "all" = todos.
   router.post('/jobs/run', route(async (req, res) => {
     const { type } = req.body || {};
-    const job = await orchestrator.runJob(type);
+    const requested = String(req.body?.site || '').trim();
+    let site = null;
+    let siteName = null;
+    if (requested && requested !== 'all') {
+      const found = loadSites(readEnvFile() || {}, dataDir).find((candidate) => candidate.key === requested);
+      if (!found) throw Object.assign(new Error(`Site não cadastrado: ${requested}`), { status: 400 });
+      site = found.key;
+      siteName = found.name;
+    }
+    const job = await orchestrator.runJob(type, { site, siteName });
     res.json({ ok: true, job });
   }));
 

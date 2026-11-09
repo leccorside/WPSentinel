@@ -16,6 +16,7 @@ import SftpClient from 'ssh2-sftp-client';
 import { loadSites, saveSites, sanitizeSite, connectSftpWithRetry } from '../src/config.mjs';
 import { lookupServerIps, parseSessions, suspiciousReasons } from '../src/sessions.mjs';
 import { ENV_FILE, readEnvFile } from './config.mjs';
+import { confirmationFor, deleteReviewedPath, isDeletablePath } from './manual-delete.mjs';
 import { readAlerts, readBaseline, readPlan, readState, summarizeSite } from './data.mjs';
 
 const ALLOWED_CONFIG_KEYS = new Set([
@@ -26,9 +27,9 @@ const ALLOWED_CONFIG_KEYS = new Set([
   'MONITOR_AUTOSTART',
 ]);
 
-export function createFeaturesRouter({ paths }) {
+export function createFeaturesRouter({ paths, orchestrator = null }) {
   const router = express.Router();
-  const { dataDir } = paths;
+  const { dataDir, reportsDir } = paths;
   const reviewedFile = path.join(dataDir, 'reviewed-items.json');
 
   const route = (handler) => (req, res, next) => Promise.resolve(handler(req, res)).catch(next);
@@ -276,6 +277,35 @@ export function createFeaturesRouter({ paths }) {
     res.json({ ok: true, key, reviewed: Boolean(reviewed) });
   }));
 
+  // Apaga (com backup) o arquivo ou pasta de um item de revisão manual. Só caminhos que estão num item do último
+  // plano; exige o código EXCLUIR-<chave> e nenhum trabalho/ciclo do monitor em andamento.
+  router.post('/manual-review/delete', route(async (req, res) => {
+    const { key, confirmation } = req.body || {};
+    const { value: plan } = await readPlan(dataDir);
+    const item = (plan?.manualReview || []).find((candidate) => makeItemKey(candidate) === key);
+    if (!item) throw httpError(404, 'Item de revisão manual não encontrado no plano atual. Gere o plano de novo.');
+    const rel = item.details?.path;
+    if (!rel || !isDeletablePath(rel)) throw httpError(400, 'Este item não aponta para um arquivo ou pasta que possa ser apagado pelo painel.');
+    if (String(confirmation || '').trim() !== confirmationFor(key)) {
+      throw httpError(400, `Código de confirmação incorreto. Digite exatamente ${confirmationFor(key)}.`);
+    }
+    const runtime = orchestrator?.getRuntime();
+    if (runtime?.job && ['running', 'waiting_confirmation'].includes(runtime.job.status)) {
+      throw httpError(409, `Há um trabalho em andamento (${runtime.job.label}). Aguarde terminar.`);
+    }
+    if (runtime?.monitor?.state === 'running') {
+      throw httpError(409, 'O monitor está no meio de um ciclo. Aguarde o ciclo terminar.');
+    }
+    const site = loadSites(readEnvFile() || {}, dataDir).find((candidate) => candidate.key === item.site);
+    if (!site) throw httpError(404, `Site ${item.site} não está mais cadastrado.`);
+
+    const result = await deleteReviewedPath({ site, rel, dataDir, reportsDir, reason: item.message });
+    const reviewedMap = await readReviewedMap();
+    reviewedMap[key] = { reviewedAt: new Date().toISOString(), notes: `${result.kind} apagado(a) pelo painel; backup em ${result.backup}` };
+    await fs.writeFile(reviewedFile, `${JSON.stringify(reviewedMap, null, 2)}\n`, 'utf8');
+    res.json({ ok: true, key, ...result });
+  }));
+
   // 6. Gestão Dinâmica de Sites (Configuração 100% via Tela)
   router.get('/sites-manage', route(async (req, res) => {
     const list = loadSites(readEnvFile() || {}, dataDir);
@@ -449,7 +479,10 @@ export function createFeaturesRouter({ paths }) {
 // Chave única determinística para cada item de revisão manual
 export function makeItemKey(item) {
   const seed = `${item.site || ''}:${item.message || ''}:${item.details?.path || item.details?.hook || item.details?.postId || item.details?.titulo || item.reason || ''}`;
-  return crypto.createHash('sha256').update(seed).digest('hex').slice(0, 16);
+  // Detalhes que distinguem itens de mesma mensagem (ex.: qual cabeçalho falta, home vista como navegador ou
+  // Googlebot). Só entram quando existem, então as chaves já marcadas dos demais itens não mudam.
+  const extra = ['header', 'visto_como', 'status'].map((field) => item.details?.[field]).filter((v) => v !== undefined && v !== null);
+  return crypto.createHash('sha256').update(extra.length ? `${seed}:${extra.join('|')}` : seed).digest('hex').slice(0, 16);
 }
 
 // Os erros do ssh2 são genéricos; os casos comuns em hospedagem cPanel ganham uma explicação.

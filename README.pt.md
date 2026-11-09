@@ -349,10 +349,31 @@ Também remove drop-ins e PHP em `wp-content/cache/` classificados como malicios
 reconhecida vão para revisão manual). Todo arquivo apagado pela limpeza tem cópia em
 `.monitor-data/backups/<plano>-<site>-arquivos/`.
 
+Pastas de plugin e tema maliciosas conhecidas (lista `MALICIOUS_PLUGIN` e temas `category_template_17781NNNNN`
+em `src/clean.mjs`) são apagadas inteiras, porque desativar não basta: os webshells dentro delas respondem por URL
+direta. Antes de apagar, a pasta é baixada para o backup e a contagem de arquivos é conferida; se não bater, nada é
+apagado. Um tema só é apagado se não for o tema ativo (`template`/`stylesheet` no banco). Plugins legítimos usados
+pelo invasor (`code-snippets`, `fileorganizer`) só são desativados e vão para revisão manual.
+
+Na Central de Limpeza do painel, cada item de revisão manual mostra o motivo real, o nome e o caminho do arquivo
+ou pasta. Quando o item aponta para um arquivo ou pasta, há o botão **Excluir**: o painel faz o backup, apaga e
+registra no relatório do dia, depois que o operador digita o código `EXCLUIR-<código>` mostrado na tela. Só aceita
+caminhos que estão num item do último plano, recusa o `wp-config.php` e outros arquivos centrais, e não roda
+durante uma varredura ou limpeza.
+
+**Escopo por site.** Ao disparar varredura, varredura com hash completo ou plano de limpeza pelo painel, dá para
+escolher **todos os sites** ou **um só** (o site do filtro do cabeçalho vem pré-selecionado). Na linha de comando,
+o mesmo vale com `--site=<chave>` (ex.: `node src/monitor.mjs --once --site=drlui614`,
+`node src/clean.mjs --plan --site=drlui614`). A varredura de um site atualiza só o estado dele; o plano de um site
+só olha os alertas, arquivos e banco dele, e a execução do plano usa o mesmo escopo (mostrado na Central de
+Limpeza). Um alerta deixa de ser pendente quando há uma limpeza que cobriu o site dele (a limpeza registra os sites
+que limpou). A redefinição da baseline continua só para todos os sites.
+
 Também remove, no banco: opções do malware (`sc_*`, cópias com nome hexadecimal, `wpeditor_*`),
 plugins maliciosos que ficaram na lista de ativos e o snippet "Site Optimizer Bridge" do Code Snippets,
 sempre com backup em `.monitor-data/backups/`. Usuários só são excluídos se o site tiver usuários na
-baseline confiável; sem isso, a exclusão vai para revisão manual. Um site pode ter datas de corte
+baseline confiável; sem isso, a exclusão vai para revisão manual, exceto os logins confirmados como do invasor
+(`MALICIOUS_LOGINS` em `src/clean.mjs`, ex.: `default_john_from_usa`). Um site pode ter datas de corte
 (`<PREFIXO>_SPAM_SINCE_POST` e `<PREFIXO>_SPAM_SINCE_PAGE` no `.env`): posts e páginas criados a partir delas
 são apagados como spam. Só defina depois de confirmar que não há conteúdo legítimo nesse período.
 
