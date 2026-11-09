@@ -139,7 +139,9 @@ export function createOrchestrator({ rootDir, onNotification = null }) {
     };
   }
 
-  function lineProcessor(onLine) {
+  // flushPartial: perguntas interativas (ex.: o readline do clean.mjs pedindo LIMPAR-<ID>) terminam sem quebra de
+  // linha e ficariam presas no buffer; quando o pedaço pendente satisfaz o teste, ele é entregue como linha.
+  function lineProcessor(onLine, flushPartial = null) {
     let buffer = '';
     return (chunk) => {
       buffer += chunk.toString('utf8');
@@ -148,8 +150,14 @@ export function createOrchestrator({ rootDir, onNotification = null }) {
       for (const line of lines) {
         onLine(line);
       }
+      if (buffer && flushPartial?.(stripAnsi(buffer))) {
+        onLine(buffer);
+        buffer = '';
+      }
     };
   }
+
+  const CONFIRM_PROMPT = /Para executar (\d+) ação\(ões\), digite exatamente (LIMPAR-[A-F0-9]+):/i;
 
   // Início do monitor contínuo
   async function startMonitor() {
@@ -362,7 +370,7 @@ export function createOrchestrator({ rootDir, onNotification = null }) {
 
         // Detecta pedido de confirmação interativa do clean.mjs:
         // "Para executar X ação(ões), digite exatamente LIMPAR-XXXXX: "
-        const confirmMatch = cleanLine.match(/Para executar (\d+) ação\(ões\), digite exatamente (LIMPAR-[A-F0-9]+):/i);
+        const confirmMatch = cleanLine.match(CONFIRM_PROMPT);
         if (confirmMatch && type === 'clean') {
           job.status = 'waiting_confirmation';
           job.confirmation = {
@@ -382,7 +390,7 @@ export function createOrchestrator({ rootDir, onNotification = null }) {
             details: { code: confirmMatch[2], actionCount: Number(confirmMatch[1]) },
           });
         }
-      })
+      }, (partial) => type === 'clean' && CONFIRM_PROMPT.test(partial))
     );
 
     child.stderr.on(
