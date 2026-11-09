@@ -176,10 +176,10 @@ export default function App() {
     },
     onJob: (j) => {
       setStatus((prev) => (prev ? { ...prev, job: j } : null));
-      if (j?.status === 'waiting_confirmation') {
-        setIsDoubleCheckOpen(true);
-      }
-      if (j?.status === 'completed' || j?.status === 'failed') {
+      // O modal do código só existe enquanto uma limpeza espera a confirmação; se ela terminar ou for cancelada
+      // (inclusive por outra aba), fecha.
+      setIsDoubleCheckOpen(j?.status === 'waiting_confirmation');
+      if (['completed', 'failed', 'cancelled'].includes(j?.status)) {
         loadData();
       }
     },
@@ -621,11 +621,13 @@ export default function App() {
       />
 
       {/* Double Check Modal for Cleanup */}
+      {/* Só com uma limpeza de fato esperando o código, e só com o código que ela pediu: o ID do plano salvo não
+          serve (a execução gera um plano novo, com outro ID). */}
       <DoubleCheckModal
-        isOpen={isDoubleCheckOpen || currentJob?.status === 'waiting_confirmation'}
+        isOpen={isDoubleCheckOpen && currentJob?.status === 'waiting_confirmation' && Boolean(currentJob?.confirmation?.code)}
         title="Confirmação Obrigatória de Limpeza"
         promptText={currentJob?.confirmation?.prompt || 'Esta ação executará as remoções propostas pelo motor de limpeza.'}
-        confirmationPhrase={currentJob?.confirmation?.code || (plan?.plan?.id ? `LIMPAR-${plan.plan.id}` : '')}
+        confirmationPhrase={currentJob?.confirmation?.code || ''}
         onConfirm={handleConfirmClean}
         onCancel={handleCancelClean}
         loading={cleanActionLoading}

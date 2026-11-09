@@ -95,7 +95,6 @@ export function CleanupView({
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
   const [jsonModalOpen, setJsonModalOpen] = useState(false);
-  const [copiedPhrase, setCopiedPhrase] = useState(false);
   const [copiedJson, setCopiedJson] = useState(false);
   const [toastMessage, setToastMessage] = useState(null);
 
@@ -160,16 +159,6 @@ export function CleanupView({
     } finally {
       setDeleting(false);
     }
-  };
-
-  const confirmationCode = plan?.id ? `LIMPAR-${plan.id}` : '';
-
-  const handleCopyCode = () => {
-    if (!confirmationCode) return;
-    navigator.clipboard.writeText(confirmationCode).then(() => {
-      setCopiedPhrase(true);
-      setTimeout(() => setCopiedPhrase(false), 2000);
-    });
   };
 
   const handleCopyJson = () => {
@@ -457,21 +446,10 @@ export function CleanupView({
                 </span>
               </div>
 
-              {confirmationCode && (
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-xs text-outline hidden sm:inline">Chave de Autorização:</span>
-                  <button
-                    type="button"
-                    onClick={handleCopyCode}
-                    className="flex items-center gap-1 px-2.5 py-1 bg-surface-container hover:bg-surface-container-high border border-outline-variant/30 text-amber-400 font-mono text-xs rounded transition-colors cursor-pointer"
-                    title="Copiar frase exigida para execução"
-                  >
-                    <span>{confirmationCode}</span>
-                    <span className="material-symbols-outlined text-xs">
-                      {copiedPhrase ? 'check' : 'content_copy'}
-                    </span>
-                  </button>
-                </div>
+              {plan?.id && (
+                <span className="font-mono text-[11px] text-outline">
+                  O código LIMPAR-… aparece ao clicar em "Executar plano" (é gerado na hora da execução).
+                </span>
               )}
             </div>
 
