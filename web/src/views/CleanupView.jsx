@@ -563,6 +563,8 @@ export function CleanupView({
                                 ? 'Restauração de Arquivo Canônico da Baseline'
                                 : action.type === 'delete_directory'
                                 ? `Remoção de ${action.path?.includes('/themes/') ? 'Tema' : 'Plugin'} Malicioso (pasta inteira)`
+                                : action.type === 'ensure_uploads_htaccess'
+                                ? `Bloqueio de PHP em uploads (${action.mode === 'create' ? 'criar .htaccess' : 'complementar .htaccess'})`
                                 : 'Exclusão de Arquivo Malicioso'}
                             </span>
                             <span className="px-2 py-0.5 bg-error-container text-on-error-container font-mono text-[10px] uppercase rounded">

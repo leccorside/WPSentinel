@@ -366,6 +366,13 @@ regravação sem mudanças devolverem exatamente o mesmo texto. Depois da execu�
 resultado vai para o relatório. Se nenhuma ação automática puder ser a origem, o item vai para a revisão manual com
 os domínios vistos.
 
+**Bloqueio de PHP em uploads.** O plano testa a mesma sonda do monitor (`/wp-content/uploads/wp-monitor-probe.php`)
+na hora. Sem 403, a limpeza cria o `wp-content/uploads/.htaccess` padrão (`Options -Indexes` + `FilesMatch`
+`(?i)\.(php[0-9]*|phtml|phar|phps)$` com `Require all denied`) ou, se já existir um `.htaccess` sem o bloqueio,
+acrescenta o bloco ao final, sem apagar regras de outros plugins e com backup do original. Depois de gravar, a sonda
+é testada de novo. Se o bloqueio já está no arquivo e mesmo assim a sonda não dá 403, o servidor ignora `.htaccess`
+(ex.: Nginx) e o item vai para a revisão manual.
+
 **Usuários permitidos por site** (Configurações › Conexões › editar site): com a lista preenchida, a limpeza exclui
 qualquer outro login do WordPress, sem revisão manual. O conteúdo do excluído é transferido para o primeiro usuário
 permitido e os usuários vão para o backup. Se nenhum login da lista existir no banco, nada é excluído.

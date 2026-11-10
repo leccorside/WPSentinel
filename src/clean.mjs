@@ -37,6 +37,17 @@ const MALICIOUS_THEME = /^category_template_17781\d{5}$/;
 // Logins criados pelo invasor, confirmados pelo responsável (09/11/2026: ninguém conhece "default_john_from_usa").
 const MALICIOUS_LOGINS = /^default_john_from_usa$/i;
 const REMOVABLE_DIRECTORY = /^wp-content\/(?:plugins|themes)\/[^/]+$/;
+// Bloqueio de PHP em uploads: mesmo conteúdo usado nos sites (padrão adotado em 09/11/2026). A sonda é a mesma do
+// monitor; 403 = bloqueado.
+const UPLOADS_HTACCESS = 'wp-content/uploads/.htaccess';
+const UPLOADS_PHP_BLOCK = [
+  '# Arquivos enviados nunca devem executar PHP.',
+  '<FilesMatch "(?i)\\.(php[0-9]*|phtml|phar|phps)$">',
+  '    Require all denied',
+  '</FilesMatch>',
+].join('\n');
+const UPLOADS_HTACCESS_CONTENT = `Options -Indexes\n\n${UPLOADS_PHP_BLOCK}\n`;
+const UPLOADS_PROBE = 'wp-content/uploads/wp-monitor-probe.php';
 // Como a home é pedida na conferência de links ocultos. Fica aqui em cima: o plano roda em top-level await e usaria a
 // constante antes da declaração se ela ficasse junto das funções (mesmo erro já visto com serverIpCache no monitor).
 const HOME_AGENTS = [
@@ -94,6 +105,8 @@ const ignoredInPlanMessages = new Set([
   // A home é conferida ao vivo na montagem do plano (homeSpam): alerta antigo de uma home que já está limpa não vira
   // item de revisão.
   'Links externos ocultos na home',
+  // Também conferido ao vivo (sonda HTTP em uploads) e corrigido por ensure_uploads_htaccess.
+  'Bloqueio de PHP em uploads não está ativo',
 ]);
 
 for (const alert of pendingAlerts) {
@@ -230,7 +243,7 @@ console.log(`\nLimpeza ${plan.id} concluída: ${completed.length} ação(ões). 
 async function writeCleanReport(status, { completed = [], verification = [], error = null } = {}) {
   try {
     const labels = {
-      delete_file: 'Arquivo removido', delete_directory: 'Pasta removida', delete_users: 'Usuários excluídos', delete_application_passwords: 'Application Passwords removidas',
+      delete_file: 'Arquivo removido', delete_directory: 'Pasta removida', ensure_uploads_htaccess: 'Bloqueio de PHP em uploads aplicado', delete_users: 'Usuários excluídos', delete_application_passwords: 'Application Passwords removidas',
       destroy_sessions: 'Sessões de login encerradas', disable_registration: 'Cadastro público desativado', delete_wpse_option: 'Opção wpse_user_id removida',
       restore_url: 'Endereço do site restaurado', remove_known_cron_hooks: 'Tarefas maliciosas removidas do WP-Cron', delete_malicious_options: 'Opções do malware removidas',
       remove_malicious_active_plugins: 'Plugins maliciosos retirados da lista de ativos', delete_malicious_snippets: 'Snippets maliciosos removidos',
@@ -238,7 +251,7 @@ async function writeCleanReport(status, { completed = [], verification = [], err
       remove_hidden_links_options: 'Links ocultos removidos de opções do banco',
     };
     const describe = (a) => {
-      const extra = a.type === 'delete_file' || a.type === 'delete_directory' ? `${a.path} (${a.reason})`
+      const extra = a.type === 'delete_file' || a.type === 'delete_directory' || a.type === 'ensure_uploads_htaccess' ? `${a.path} (${a.reason})`
         : a.type === 'delete_users' ? `${a.logins?.length ? `${a.logins.join(', ')} — ` : ''}IDs ${a.ids.join(', ')}`
           : a.type === 'remove_known_cron_hooks' ? a.hooks.join(', ')
             : a.type === 'remove_malicious_active_plugins' ? a.plugins.join(', ')
@@ -535,6 +548,22 @@ async function inspectMalwareMarkers() {
             plan.manualReview.push({ severity: 'high', site: site.key, message: `${isDropin(rel) ? 'Drop-in' : 'PHP em wp-content/cache'} sem origem reconhecida; confira antes de apagar`, details: { path: rel } });
           }
         }
+        // Bloqueio de PHP em uploads, conferido agora pela sonda (403 = bloqueado). Sem bloqueio: cria o .htaccess ou
+        // acrescenta o bloco ao existente (preserva regras de outros plugins). Se o bloco já está lá e mesmo assim não
+        // dá 403, o servidor ignora .htaccess (ex.: Nginx): revisão manual em vez de repetir.
+        const probe = await probeStatus(site);
+        if (probe !== null && probe !== 403) {
+          const remoteHtaccess = `${site.remoteRoot}/${UPLOADS_HTACCESS}`;
+          const current = (await sftp.exists(remoteHtaccess)) ? normalizeBuffer(await sftp.get(remoteHtaccess)).toString('utf8') : null;
+          if (current !== null && /FilesMatch[^>]*php[\s\S]*?Require all denied/i.test(current)) {
+            plan.manualReview.push({ severity: 'critical', site: site.key, message: 'Bloqueio de PHP em uploads existe no .htaccess, mas o servidor não aplica (sonda não dá 403)', details: { path: UPLOADS_HTACCESS, status: probe } });
+          } else if (await sftp.exists(`${site.remoteRoot}/wp-content/uploads`)) {
+            actions.push({
+              type: 'ensure_uploads_htaccess', site: site.key, path: UPLOADS_HTACCESS, mode: current === null ? 'create' : 'append',
+              reason: `Bloqueio de PHP em uploads não está ativo (sonda HTTP ${probe}); ${current === null ? 'criar' : 'acrescentar o bloco ao'} ${UPLOADS_HTACCESS}`,
+            });
+          }
+        }
         // Pastas de plugin/tema maliciosas: desativar não basta, porque os webshells dentro delas respondem por URL
         // direta. São apagadas inteiras (com backup); um tema só depois de confirmar que não é o ativo.
         for (const [kind, isMalicious] of [['plugins', (name) => MALICIOUS_PLUGIN.test(name)], ['themes', (name) => MALICIOUS_THEME.test(name)]]) {
@@ -646,6 +675,22 @@ async function executeFileActions(actions, completed) {
       if (!site || !isSafeRemoteRelativePath(action.path)) throw new Error('Caminho remoto inseguro recusado');
       const sftp = await pool.get(site);
       const remotePath = `${site.remoteRoot}/${action.path}`.replace(/\/+/g, '/');
+      if (action.type === 'ensure_uploads_htaccess') {
+        if (action.path !== UPLOADS_HTACCESS) throw new Error(`Caminho inesperado para o bloqueio de uploads: ${action.path}`);
+        const current = (await sftp.exists(remotePath)) ? normalizeBuffer(await sftp.get(remotePath)).toString('utf8') : null;
+        if (current !== null) {
+          // Backup do .htaccess original: .monitor-data/backups/<plano>-<site>-arquivos/wp-content/uploads/.htaccess
+          const local = path.join(BACKUP_DIR, `${plan.id}-${site.key}-arquivos`, ...action.path.split('/'));
+          await fs.mkdir(path.dirname(local), { recursive: true });
+          await fs.writeFile(local, current, 'utf8');
+        }
+        const content = current === null ? UPLOADS_HTACCESS_CONTENT : `${current.replace(/\s*$/, '')}\n\n${UPLOADS_PHP_BLOCK}\n`;
+        await sftp.put(Buffer.from(content, 'utf8'), remotePath);
+        completed.push(action);
+        const probe = await probeStatus(site);
+        console.log(`Bloqueio de PHP em uploads ${current === null ? 'criado' : 'acrescentado ao .htaccess existente'}: ${site.name}/${action.path} — sonda agora: HTTP ${probe ?? 'sem resposta'}${probe === 403 ? ' (bloqueado)' : ' (ATENÇÃO: ainda não bloqueia; o servidor pode ignorar .htaccess)'}`);
+        continue;
+      }
       if (action.type === 'delete_directory') {
         if (!REMOVABLE_DIRECTORY.test(action.path)) throw new Error(`Pasta fora de wp-content/plugins|themes recusada: ${action.path}`);
         if (await sftp.exists(remotePath) !== 'd') continue;
@@ -877,6 +922,16 @@ function cleanOptionValue(raw, siteHost) {
   return { ok: true, value, removed };
 }
 
+// Status HTTP da sonda de PHP em uploads (null = sem resposta: não conclui nada).
+async function probeStatus(site) {
+  try {
+    const response = await fetch(`${site.url}/${UPLOADS_PROBE}?nocache=${Date.now()}`, { redirect: 'manual', signal: AbortSignal.timeout(20000) });
+    return response.status;
+  } catch {
+    return null;
+  }
+}
+
 // Home pedida agora como navegador e como Googlebot (algumas injeções só aparecem para o buscador).
 async function checkHomeSpam(site) {
   const host = new URL(site.url).hostname;
@@ -943,7 +998,10 @@ async function verifyPublishedPages(actions) {
 
 function printPlan(value) {
   console.log(`\nPlano ${value.id} — ${value.scope ? `só o site ${value.scope.join(', ')}` : 'todos os sites'}`);
-  for (const action of value.fileActions) console.log(`  [${action.type === 'delete_directory' ? 'PASTA' : 'ARQUIVO'}] excluir ${action.site}/${action.path} — ${action.reason}`);
+  for (const action of value.fileActions) {
+    if (action.type === 'ensure_uploads_htaccess') console.log(`  [ARQUIVO] ${action.mode === 'create' ? 'criar' : 'complementar'} ${action.site}/${action.path} — ${action.reason}`);
+    else console.log(`  [${action.type === 'delete_directory' ? 'PASTA' : 'ARQUIVO'}] excluir ${action.site}/${action.path} — ${action.reason}`);
+  }
   for (const action of value.databaseActions) console.log(`  [BANCO] ${action.site}: ${action.type} — ${action.reason}`);
   for (const home of value.verifyHome || []) {
     console.log(`  [HOME] ${home.site}: ${home.links} link(s) oculto(s) na home agora (${home.visto_como.join(' e ')}); conferida de novo após a execução`);
