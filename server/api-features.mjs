@@ -484,7 +484,7 @@ export function makeItemKey(item) {
   const seed = `${item.site || ''}:${item.message || ''}:${item.details?.path || item.details?.hook || item.details?.postId || item.details?.titulo || item.reason || ''}`;
   // Detalhes que distinguem itens de mesma mensagem (ex.: qual cabeçalho falta, home vista como navegador ou
   // Googlebot). Só entram quando existem, então as chaves já marcadas dos demais itens não mudam.
-  const extra = ['header', 'visto_como', 'status'].map((field) => item.details?.[field]).filter((v) => v !== undefined && v !== null);
+  const extra = ['header', 'visto_como', 'status', 'login'].map((field) => item.details?.[field]).filter((v) => v !== undefined && v !== null);
   return crypto.createHash('sha256').update(extra.length ? `${seed}:${extra.join('|')}` : seed).digest('hex').slice(0, 16);
 }
 

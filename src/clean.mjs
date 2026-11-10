@@ -37,6 +37,12 @@ const MALICIOUS_THEME = /^category_template_17781\d{5}$/;
 // Logins criados pelo invasor, confirmados pelo responsável (09/11/2026: ninguém conhece "default_john_from_usa").
 const MALICIOUS_LOGINS = /^default_john_from_usa$/i;
 const REMOVABLE_DIRECTORY = /^wp-content\/(?:plugins|themes)\/[^/]+$/;
+// Como a home é pedida na conferência de links ocultos. Fica aqui em cima: o plano roda em top-level await e usaria a
+// constante antes da declaração se ela ficasse junto das funções (mesmo erro já visto com serverIpCache no monitor).
+const HOME_AGENTS = [
+  ['navegador', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36'],
+  ['Googlebot', 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'],
+];
 const PLAN_ONLY = process.argv.includes('--plan');
 
 // Sites, caminhos, bancos e acessos vêm do .env (ver src/config.mjs).
@@ -85,6 +91,9 @@ const ignoredInPlanMessages = new Set([
   'Arquivo monitorado foi removido',
   'Falha ao verificar o site',
   'Falha geral da varredura',
+  // A home é conferida ao vivo na montagem do plano (homeSpam): alerta antigo de uma home que já está limpa não vira
+  // item de revisão.
+  'Links externos ocultos na home',
 ]);
 
 for (const alert of pendingAlerts) {
@@ -116,6 +125,14 @@ for (const alert of pendingAlerts) {
 
 plan.fileActions.push(...await inspectMalwareMarkers());
 
+// Links ocultos na home, conferidos agora (navegador e Googlebot): a origem é tratada pelas ações automáticas
+// (plugins/temas maliciosos, snippet, conteúdo, opções do banco) e a home é conferida de novo depois da execução.
+const homeSpam = new Map();
+for (const site of sites) {
+  const found = await checkHomeSpam(site);
+  if (found.hosts.length) homeSpam.set(site.key, found);
+}
+
 const activeThemes = new Map();
 for (const site of sites) {
   if (!site.db.enabled) continue;
@@ -143,9 +160,24 @@ plan.fileActions = plan.fileActions.filter((action) => {
   return false;
 });
 
+// Home com links ocultos: verificada de novo após a execução. Sem nenhuma ação automática que possa ser a origem
+// (código ou banco do site), vira revisão manual com os domínios vistos agora.
+const HOME_SOURCE_ACTIONS = new Set(['delete_directory', 'delete_file', 'remove_malicious_active_plugins', 'delete_malicious_snippets', 'delete_malicious_options', 'remove_hidden_links', 'remove_hidden_links_options']);
+plan.verifyHome = [];
+for (const [siteKey, found] of homeSpam) {
+  plan.verifyHome.push({ site: siteKey, links: found.hosts.length, dominios: [...new Set(found.hosts)].length, visto_como: found.agents });
+  const covered = [...plan.fileActions, ...plan.databaseActions].some((action) => action.site === siteKey && HOME_SOURCE_ACTIONS.has(action.type));
+  if (!covered) {
+    plan.manualReview.push({
+      severity: 'critical', site: siteKey, message: 'Links externos ocultos na home sem origem encontrada pela limpeza automática',
+      details: { visto_como: found.agents.join(' e '), links: found.hosts.length, dominios: [...new Set(found.hosts)] },
+    });
+  }
+}
+
 // Cada varredura repete os alertas que continuam valendo (ex.: links ocultos na home): na revisão manual fica um item
 // por problema, o mais recente, com os mesmos campos que distinguem itens no painel (makeItemKey).
-const reviewKey = (item) => [item.site, item.message, item.details?.path, item.details?.header, item.details?.visto_como, item.details?.status, item.details?.hook, item.details?.postId].join('|');
+const reviewKey = (item) => [item.site, item.message, item.details?.path, item.details?.header, item.details?.visto_como, item.details?.status, item.details?.hook, item.details?.postId, item.details?.login, item.details?.id].join('|');
 plan.manualReview = [...new Map(plan.manualReview.map((item) => [reviewKey(item), item])).values()];
 plan.fileActions = uniqueActions(plan.fileActions);
 plan.databaseActions = uniqueActions(plan.databaseActions);
@@ -180,7 +212,7 @@ let verification = [];
 try {
   await executeFileActions(plan.fileActions, completed);
   await executeDatabaseActions(plan.databaseActions, completed);
-  verification = await verifyPublishedPages(completed);
+  verification = [...await verifyPublishedPages(completed), ...await verifyHomes(plan.verifyHome)];
 } catch (error) {
   await writeCleanReport('erro', { completed, error });
   throw error;
@@ -203,6 +235,7 @@ async function writeCleanReport(status, { completed = [], verification = [], err
       restore_url: 'Endereço do site restaurado', remove_known_cron_hooks: 'Tarefas maliciosas removidas do WP-Cron', delete_malicious_options: 'Opções do malware removidas',
       remove_malicious_active_plugins: 'Plugins maliciosos retirados da lista de ativos', delete_malicious_snippets: 'Snippets maliciosos removidos',
       delete_spam_content: 'Spam removido', remove_hidden_links: 'Links externos ocultos removidos', delete_spam_revisions: 'Revisões com spam removidas',
+      remove_hidden_links_options: 'Links ocultos removidos de opções do banco',
     };
     const describe = (a) => {
       const extra = a.type === 'delete_file' || a.type === 'delete_directory' ? `${a.path} (${a.reason})`
@@ -429,6 +462,30 @@ async function inspectDatabaseForCleanup(site, trustedSite) {
     }
     if (spamRevisions.length) {
       actions.push({ type: 'delete_spam_revisions', site: site.key, ids: spamRevisions, reason: `${spamRevisions.length} revisão(ões) com links ocultos` });
+    }
+
+    // Links ocultos guardados em opções (widgets de texto/HTML, theme_mods, HTML do cabeçalho/rodapé de temas e
+    // plugins): só o bloco oculto sai, o resto da opção fica. Opção serializada só é editada se a leitura e a
+    // regravação sem mudanças devolverem exatamente o mesmo texto; senão vai para revisão manual.
+    const [optionRows] = await connection.query(
+      `SELECT option_name, option_value FROM \`${prefix}options\`
+       WHERE option_value LIKE '%position%' AND option_value LIKE '%http%'
+         AND option_name NOT LIKE '\\_transient%' AND option_name NOT LIKE '\\_site\\_transient%'
+         AND LENGTH(option_value) < 2097152`,
+    );
+    const dirtyOptions = [];
+    for (const row of optionRows) {
+      const value = String(row.option_value || '');
+      if (!findHiddenBlocks(value, siteHost).length) continue;
+      const cleaned = cleanOptionValue(value, siteHost);
+      if (cleaned.ok) dirtyOptions.push({ name: row.option_name, hosts: [...new Set(cleaned.removed)] });
+      else manualReview.push({ severity: 'critical', site: site.key, message: 'Opção do banco com links ocultos que não pôde ser editada com segurança', details: { option: row.option_name, motivo: cleaned.error } });
+    }
+    if (dirtyOptions.length) {
+      actions.push({
+        type: 'remove_hidden_links_options', site: site.key, names: dirtyOptions.map((o) => o.name),
+        reason: `Links externos ocultos em ${dirtyOptions.length} opção(ões) do banco: ${dirtyOptions.map((o) => o.name).join(', ')}`,
+      });
     }
     // Tema pai e tema filho em uso: o plano nunca apaga um deles.
     const activeThemes = [optionMap.template, optionMap.stylesheet].filter(Boolean);
@@ -734,6 +791,16 @@ async function executeDatabaseActions(actions, completed) {
           await writeBackup(site, 'revisoes', { posts: revisions, postmeta: revisionMeta });
           await connection.query(`DELETE FROM \`${prefix}postmeta\` WHERE post_id IN (?)`, [ids]);
           await connection.query(`DELETE FROM \`${prefix}posts\` WHERE ID IN (?) AND post_type = 'revision'`, [ids]);
+        } else if (action.type === 'remove_hidden_links_options') {
+          const siteHost = new URL(site.url).hostname;
+          const [rows] = await connection.query(`SELECT option_id, option_name, option_value FROM \`${prefix}options\` WHERE option_name IN (?) FOR UPDATE`, [action.names]);
+          await writeBackup(site, 'opcoes-links-ocultos', rows);
+          for (const row of rows) {
+            const cleaned = cleanOptionValue(String(row.option_value || ''), siteHost);
+            if (!cleaned.ok) throw new Error(`Opção ${row.option_name} não pôde ser limpa: ${cleaned.error}`);
+            if (findHiddenBlocks(cleaned.value, siteHost).length) throw new Error(`Opção ${row.option_name}: ainda restam links ocultos depois da edição`);
+            await connection.query(`UPDATE \`${prefix}options\` SET option_value = ? WHERE option_id = ?`, [cleaned.value, row.option_id]);
+          }
         } else {
           throw new Error(`Ação desconhecida: ${action.type}`);
         }
@@ -781,6 +848,74 @@ async function writeBackup(site, kind, data) {
   console.log(`Backup salvo: ${path.relative(ROOT_DIR, file)}`);
 }
 
+// Tira os blocos ocultos de uma opção do banco. Texto simples: direto. Serializado (PHP): edita as strings por dentro
+// e serializa de novo, só se a ida e volta sem mudanças reproduzir o texto original (senão recusa, para não corromper).
+function cleanOptionValue(raw, siteHost) {
+  if (!/^(?:a|O|s|i|d|b|N):/.test(raw) || raw === 'N;') {
+    const result = stripHiddenBlocks(raw, siteHost);
+    return { ok: true, value: result.html, removed: result.removed.flatMap((block) => block.hosts) };
+  }
+  let parsed;
+  try { parsed = unserialize(raw); } catch (error) { return { ok: false, error: `serializado não pôde ser lido (${error.message})` }; }
+  try {
+    if (serialize(parsed) !== raw) return { ok: false, error: 'serializado não volta idêntico ao ser regravado' };
+  } catch (error) {
+    return { ok: false, error: `serializado não pôde ser regravado (${error.message})` };
+  }
+  const removed = [];
+  const walk = (value) => {
+    if (typeof value === 'string') {
+      const result = stripHiddenBlocks(value, siteHost);
+      removed.push(...result.removed.flatMap((block) => block.hosts));
+      return result.html;
+    }
+    if (value && typeof value === 'object') for (const key of Object.keys(value)) value[key] = walk(value[key]);
+    return value;
+  };
+  const value = serialize(walk(parsed));
+  try { unserialize(value); } catch { return { ok: false, error: 'resultado serializado inválido' }; }
+  return { ok: true, value, removed };
+}
+
+// Home pedida agora como navegador e como Googlebot (algumas injeções só aparecem para o buscador).
+async function checkHomeSpam(site) {
+  const host = new URL(site.url).hostname;
+  const found = { hosts: [], agents: [] };
+  for (const [label, agent] of HOME_AGENTS) {
+    try {
+      const response = await fetch(`${site.url}/?nocache=${Date.now()}`, { headers: { 'user-agent': agent }, redirect: 'follow', signal: AbortSignal.timeout(20000) });
+      const hosts = findHiddenBlocks(await response.text(), host).flatMap((block) => block.hosts);
+      if (hosts.length) { found.hosts.push(...hosts); found.agents.push(label); }
+    } catch {
+      // Home fora do ar não é "spam": o monitor já alerta indisponibilidade.
+    }
+  }
+  return found;
+}
+
+// Depois da execução: a home dos sites que tinham links ocultos é conferida de novo (entra no relatório).
+async function verifyHomes(entries) {
+  const results = [];
+  for (const entry of entries || []) {
+    const site = sites.find((candidate) => candidate.key === entry.site);
+    if (!site) continue;
+    const host = new URL(site.url).hostname;
+    for (const [label, agent] of HOME_AGENTS) {
+      try {
+        const response = await fetch(`${site.url}/?nocache=${Date.now()}`, { headers: { 'user-agent': agent }, redirect: 'follow', signal: AbortSignal.timeout(20000) });
+        const remaining = findHiddenBlocks(await response.text(), host).flatMap((block) => block.hosts);
+        results.push({ site: site.key, postId: null, title: 'Página inicial', agent: label, status: response.status, remaining });
+      } catch (error) {
+        results.push({ site: site.key, postId: null, title: 'Página inicial', agent: label, error: error.message });
+      }
+    }
+  }
+  for (const r of results) {
+    console.log(`Verificação ${r.site} "${r.title}" (${r.agent}): ${r.error ? `falhou (${r.error})` : r.remaining.length ? `AINDA HÁ ${r.remaining.length} link(s) oculto(s)` : `HTTP ${r.status}, nenhum link oculto`}`);
+  }
+  return results;
+}
+
 // Passo 5: confere o HTML publicado das páginas limpas (como navegador e como Googlebot).
 async function verifyPublishedPages(actions) {
   const results = [];
@@ -810,6 +945,9 @@ function printPlan(value) {
   console.log(`\nPlano ${value.id} — ${value.scope ? `só o site ${value.scope.join(', ')}` : 'todos os sites'}`);
   for (const action of value.fileActions) console.log(`  [${action.type === 'delete_directory' ? 'PASTA' : 'ARQUIVO'}] excluir ${action.site}/${action.path} — ${action.reason}`);
   for (const action of value.databaseActions) console.log(`  [BANCO] ${action.site}: ${action.type} — ${action.reason}`);
+  for (const home of value.verifyHome || []) {
+    console.log(`  [HOME] ${home.site}: ${home.links} link(s) oculto(s) na home agora (${home.visto_como.join(' e ')}); conferida de novo após a execução`);
+  }
   if (value.manualReview.length) {
     console.log(`\nRevisão manual (${value.manualReview.length}):`);
     for (const item of value.manualReview.slice(0, 20)) console.log(`  [${String(item.severity).toUpperCase()}] ${item.site}: ${item.message}${item.details?.path ? ` — ${item.details.path}` : ''}`);

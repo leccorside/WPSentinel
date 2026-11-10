@@ -358,6 +358,14 @@ desconhecidos também entram: pelo nome no padrão do kit (sufixo hexadecimal, n
 `cloudflare-vN-NN`) ou, em plugins pequenos (até 5 itens, sem subpastas) e `.php` soltos em `plugins/`, pelo
 conteúdo (código ofuscado controlado pela requisição, ou que se esconde da lista de plugins).
 
+**Links ocultos na home.** O plano pede a home na hora, como navegador e como Googlebot, em vez de confiar em
+alertas antigos: home limpa não gera item. Com links ocultos, a origem é tratada automaticamente: plugins e temas
+maliciosos, snippet, conteúdo de páginas e **opções do banco** (widgets de texto/HTML, `theme_mods`, HTML de
+cabeçalho/rodapé). Nas opções sai só o bloco oculto, com backup; opção serializada só é editada se a leitura e a
+regravação sem mudanças devolverem exatamente o mesmo texto. Depois da execução, a home é conferida de novo e o
+resultado vai para o relatório. Se nenhuma ação automática puder ser a origem, o item vai para a revisão manual com
+os domínios vistos.
+
 **Usuários permitidos por site** (Configurações › Conexões › editar site): com a lista preenchida, a limpeza exclui
 qualquer outro login do WordPress, sem revisão manual. O conteúdo do excluído é transferido para o primeiro usuário
 permitido e os usuários vão para o backup. Se nenhum login da lista existir no banco, nada é excluído.

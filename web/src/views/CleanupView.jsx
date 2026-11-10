@@ -453,6 +453,16 @@ export function CleanupView({
               )}
             </div>
 
+            {(plan?.verifyHome || []).map((home) => (
+              <div key={`home-${home.site}`} className="p-3 rounded-lg bg-error-container/15 border border-error/40 font-mono text-xs text-on-surface-variant flex items-center gap-2">
+                <span className="material-symbols-outlined text-error text-base">visibility_off</span>
+                <span>
+                  <strong className="text-error">{home.site}</strong>: {home.links} link(s) oculto(s) na home agora ({home.visto_como.join(' e ')}).
+                  As ações abaixo removem a origem; depois da execução a home é conferida de novo e o resultado vai para o relatório.
+                </span>
+              </div>
+            ))}
+
             {totalActions === 0 ? (
               <div className="p-8 rounded-xl bg-surface-container-low border border-outline-variant/30 flex flex-col items-center justify-center text-center">
                 <div className="w-12 h-12 rounded-full bg-secondary/10 text-secondary flex items-center justify-center mb-3">
