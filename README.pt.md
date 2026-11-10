@@ -432,7 +432,7 @@ Se uma página não puder ser editada com segurança, ela vai para revisão manu
 
 Depois de uma limpeza, execute `run-scan.cmd` para confirmar o estado.
 
-Na primeira execução, o estado atual é salvo como referência. Mesmo assim, assinaturas perigosas e arquivos em locais proibidos são analisados e alertados. Use `npm run reset-baseline` somente depois de confirmar que o estado remoto é confiável; esse comando também substitui a baseline usada pela limpeza.
+Na primeira execução, o estado atual é salvo como referência. Mesmo assim, assinaturas perigosas e arquivos em locais proibidos são analisados e alertados. Use `npm run reset-baseline` somente depois de confirmar que o estado remoto é confiável; esse comando também substitui a baseline usada pela limpeza. A redefinição marca como resolvidos os alertas anteriores (o estado atual passa a ser o confiável) e só é gravada se todos os sites forem verificados com sucesso; se algum falhar, a baseline anterior é mantida.
 
 ## 📄 Relatórios e auditoria
 

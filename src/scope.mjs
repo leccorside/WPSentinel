@@ -12,13 +12,17 @@ export function selectSites(allSites, key) {
   return selected;
 }
 
-// Posição (linha do alerts.jsonl) da última limpeza que cobriu cada site. A limpeza grava em details.sites os sites
-// que limpou; eventos antigos, sem essa lista, cobriam todos os sites. Um alerta é pendente se veio depois dela.
+// Eventos que "zeram" os alertas de um site: a limpeza executada e a redefinição da baseline (o estado atual passa
+// a ser o confiável, então o que foi alertado antes dela deixa de estar pendente).
+export const RESOLVING_EVENTS = new Set(['cleanup_completed', 'baseline_reset']);
+
+// Posição (linha do alerts.jsonl) do último evento que resolveu cada site. A limpeza e a redefinição gravam em
+// details.sites os sites cobertos; eventos antigos, sem essa lista, cobriam todos. Pendente = alerta depois dele.
 export function lastCleanupFinder(alerts) {
   let allSites = -1;
   const bySite = new Map();
   alerts.forEach((event, index) => {
-    if (event.message !== 'cleanup_completed') return;
+    if (!RESOLVING_EVENTS.has(event.message)) return;
     const keys = event.details?.sites;
     if (Array.isArray(keys)) for (const key of keys) bySite.set(key, index);
     else allSites = index;

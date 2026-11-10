@@ -15,7 +15,7 @@ import { MARKER_DIRS, isMalwareMarker } from './malware-markers.mjs';
 import { assertSftp, connectSftpWithRetry, dataPaths, loadSites, sftpKey, writeFileAtomic } from './config.mjs';
 import { DROPIN_FILES, classifyPhp, isCacheRootPhp, isDropin } from './dropins.mjs';
 import { appendSection, bullet, dateBR, timeBR } from './report.mjs';
-import { lastCleanupFinder, selectSites, siteArg } from './scope.mjs';
+import { RESOLVING_EVENTS, lastCleanupFinder, selectSites, siteArg } from './scope.mjs';
 
 const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const { dataDir: DATA_DIR, reportsDir: REPORTS_DIR } = dataPaths(ROOT_DIR);
@@ -87,7 +87,7 @@ const alerts = await readJsonLines(ALERT_FILE);
 // Pendente = depois da última limpeza que cobriu o site do alerta. Com --site, alertas de outros sites (e os gerais
 // do monitor) ficam fora deste plano.
 const lastCleanupOf = lastCleanupFinder(alerts);
-const pendingAlerts = alerts.filter((event, index) => event.message !== 'cleanup_completed'
+const pendingAlerts = alerts.filter((event, index) => !RESOLVING_EVENTS.has(event.message)
   && index > lastCleanupOf(event.site)
   && (!SITE_KEY || event.site === SITE_KEY));
 // Plugins marcados na busca por arquivos (lista conhecida ou parecidos), por site: também saem da lista de ativos.

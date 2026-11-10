@@ -289,8 +289,20 @@ async function runCycle() {
   state.createdAt ||= state.updatedAt;
   await writeFileAtomic(STATE_FILE, `${JSON.stringify(state, null, 2)}\n`);
   if (RESET_BASELINE) {
-    const trusted = { ...state, trustedAt: new Date().toISOString() };
-    await writeFileAtomic(BASELINE_FILE, `${JSON.stringify(trusted, null, 2)}\n`);
+    // Um site que falhou no ciclo não tem estado: a baseline nova ficaria sem ele. Nesse caso a baseline antiga é
+    // mantida e a redefinição precisa ser refeita.
+    const failed = sites.filter((site) => cycleSites.get(site.key)?.error || !cycleSites.has(site.key)).map((site) => site.key);
+    if (failed.length) {
+      console.warn(`Baseline NÃO redefinida: falha ao verificar ${failed.join(', ')}. A baseline anterior foi mantida.`);
+      totals.critical += 1;
+    } else {
+      const trusted = { ...state, trustedAt: new Date().toISOString() };
+      await writeFileAtomic(BASELINE_FILE, `${JSON.stringify(trusted, null, 2)}\n`);
+      // O estado atual passou a ser o confiável: o que foi alertado antes deixa de estar pendente (src/scope.mjs).
+      const event = { timestamp: new Date().toISOString(), severity: 'info', site: 'monitor', message: 'baseline_reset', details: { sites: sites.map((s) => s.key), cycle } };
+      await fs.appendFile(ALERT_FILE, `${JSON.stringify(event)}\n`, 'utf8');
+      console.log(`Baseline redefinida para ${sites.map((s) => s.key).join(', ')} (ciclo ${cycle}).`);
+    }
   }
   return totals;
 }

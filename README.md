@@ -369,7 +369,7 @@ When hidden links are found, guided cleanup:
 
 Pages that cannot be edited safely are left untouched and sent for manual review. After cleanup, run `run-scan.cmd` again.
 
-The initial baseline reflects whatever was on the server at first scan. Malicious signatures are still detected. **Only use `npm run reset-baseline` after independently confirming that the remote state is trustworthy**; this command also replaces the trusted baseline used for cleanup.
+The initial baseline reflects whatever was on the server at first scan. Malicious signatures are still detected. **Only use `npm run reset-baseline` after independently confirming that the remote state is trustworthy**; this command also replaces the trusted baseline used for cleanup. Resetting marks earlier alerts as resolved (the current state becomes the trusted one) and is only saved if every site is scanned successfully; if any site fails, the previous baseline is kept.
 
 <a id="section-10"></a>
 

@@ -369,7 +369,7 @@ Cuando se detectan enlaces externos ocultos, la limpieza:
 
 Si no es seguro editar una página, no la modifica y la envía a revisión manual. Después de limpiar, ejecuta `run-scan.cmd`.
 
-La primera línea base refleja el estado inicial del servidor; las firmas maliciosas siguen detectándose. **Utiliza `npm run reset-baseline` solamente tras verificar que el estado remoto es confiable**; también sustituye la línea base usada por la limpieza.
+La primera línea base refleja el estado inicial del servidor; las firmas maliciosas siguen detectándose. **Utiliza `npm run reset-baseline` solamente tras verificar que el estado remoto es confiable**; también sustituye la línea base usada por la limpieza. La redefinición marca como resueltas las alertas anteriores (el estado actual pasa a ser el confiable) y solo se graba si todos los sitios se verifican con éxito; si alguno falla, se mantiene la línea base anterior.
 
 <a id="section-10"></a>
 
