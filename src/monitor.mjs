@@ -15,6 +15,10 @@ import { assertSftp, connectSftpWithRetry, dataPaths, loadSites, sftpKey, writeF
 import { classifyPhp, isCacheRootPhp, isDropin } from './dropins.mjs';
 import { appendSection, bullet, dateBR, number, timeBR } from './report.mjs';
 import { selectSites, siteArg } from './scope.mjs';
+import {
+  READ_ONLY_MODE, ROOT_HTACCESS, WP_CONFIG, WP_CONTENT_HTACCESS,
+  checkRootHtaccess, checkWpConfig, checkWpContentHtaccess, formatMode, isReadOnly, loadHtaccessTemplate,
+} from './hardening.mjs';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(SCRIPT_DIR, '..');
@@ -37,6 +41,8 @@ const MAX_DOWNLOAD_BYTES = Math.max(1024, Number(process.env.MAX_DOWNLOAD_BYTES 
 const SITE_KEY = siteArg();
 if (SITE_KEY && RESET_BASELINE) throw new Error('--reset-baseline não aceita --site: a baseline é refeita para todos os sites.');
 const sites = selectSites(loadSites(), SITE_KEY);
+// Sem o modelo do .htaccess a conferência da raiz não funciona: falha logo no início, não no meio do ciclo.
+loadHtaccessTemplate();
 
 const monitoredExtensions = new Set([
   '.php', '.php3', '.php4', '.php5', '.php7', '.php8', '.phtml', '.phar', '.phps',
@@ -190,6 +196,14 @@ async function runCycle() {
       }
     }
 
+    // Padrão da raiz, conferido em todo ciclo: .htaccess igual ao modelo e somente leitura, wp-content/.htaccess
+    // padrão e wp-config.php com as constantes obrigatórias (src/hardening.mjs). A limpeza corrige todos.
+    const hardening = await inspectHardening(sftp, site);
+    for (const finding of hardening.findings) {
+      await emitAlert(finding.severity, site.key, finding.message, finding.details);
+      totals[finding.severity] += 1;
+    }
+
     const currentFiles = {};
     const candidates = remoteFiles.filter(shouldMonitor);
 
@@ -254,7 +268,7 @@ async function runCycle() {
     };
 
     cycleSites.set(site.key, {
-      files: candidates.length, unreadable: inventory.unreadable.length, http: http.summary,
+      files: candidates.length, unreadable: inventory.unreadable.length, http: http.summary, hardening: hardening.summary,
       dbChecked: Boolean(dbResult.snapshot), users: dbResult.users, db: dbResult.snapshot,
     });
     console.log(`${site.name}: ${candidates.length} arquivos monitorados; HTTP ${http.summary.homeStatus}.`);
@@ -450,6 +464,53 @@ async function inspectHttp(site) {
     findings,
     summary: { homeStatus: home.status, finalUrl: home.url, xmlrpcStatus: xmlrpc.status, uploadProbeStatus: uploadProbe.status },
   };
+}
+
+// .htaccess da raiz igual ao modelo (templates/root.htaccess) e wp-config.php com as constantes obrigatórias.
+async function inspectHardening(sftp, site) {
+  const findings = [];
+  const read = async (rel) => {
+    const remote = `${site.remoteRoot}/${rel}`;
+    return (await sftp.exists(remote)) ? normalizeBuffer(await sftp.get(remote)).toString('utf8') : null;
+  };
+  const htaccess = checkRootHtaccess(await read(ROOT_HTACCESS), site.url);
+  const summary = { htaccess: !htaccess ? 'igual ao padrão' : htaccess.missing ? 'NÃO EXISTE' : 'DIFERENTE DO PADRÃO' };
+  if (htaccess) {
+    findings.push({
+      severity: 'high',
+      message: htaccess.missing ? 'O .htaccess da raiz não existe' : 'O .htaccess da raiz difere do padrão',
+      details: { path: ROOT_HTACCESS, linhas_a_mais: htaccess.extra, linhas_faltando: htaccess.absent, ...(htaccess.reordered ? { ordem: 'linhas fora da ordem do padrão' } : {}) },
+    });
+  }
+  if (!htaccess?.missing) {
+    const { mode } = await sftp.stat(`${site.remoteRoot}/${ROOT_HTACCESS}`);
+    summary.htaccess += isReadOnly(mode) ? `, somente leitura (${formatMode(mode)})` : `, COM PERMISSÃO DE ESCRITA (${formatMode(mode)})`;
+    if (!isReadOnly(mode)) {
+      findings.push({ severity: 'high', message: 'O .htaccess da raiz não está somente leitura', details: { path: ROOT_HTACCESS, permissao: formatMode(mode), esperado: formatMode(READ_ONLY_MODE) } });
+    }
+  }
+  const contentHtaccess = checkWpContentHtaccess(await read(WP_CONTENT_HTACCESS));
+  summary.wpContentHtaccess = !contentHtaccess ? 'igual ao padrão' : contentHtaccess.missing ? 'NÃO EXISTE' : 'DIFERENTE DO PADRÃO';
+  if (contentHtaccess) {
+    findings.push({ severity: 'high', message: contentHtaccess.missing ? 'O .htaccess de wp-content não existe' : 'O .htaccess de wp-content difere do padrão', details: { path: WP_CONTENT_HTACCESS } });
+  }
+  const config = await read(WP_CONFIG);
+  if (config === null) {
+    summary.wpConfig = 'NÃO ENCONTRADO na raiz';
+    findings.push({ severity: 'high', message: 'wp-config.php não encontrado na raiz', details: { path: WP_CONFIG } });
+  } else {
+    const { missing, wrong } = checkWpConfig(config);
+    summary.wpConfig = missing.length || wrong.length
+      ? `FALTAM ${missing.length} e ${wrong.length} com valor diferente dos parâmetros obrigatórios`
+      : 'todos os parâmetros obrigatórios presentes';
+    if (missing.length || wrong.length) {
+      findings.push({
+        severity: 'high', message: 'wp-config.php sem os parâmetros obrigatórios',
+        details: { path: WP_CONFIG, faltando: missing, valor_diferente: wrong.map((w) => `${w.name} = ${w.atual} (esperado ${w.esperado})`) },
+      });
+    }
+  }
+  return { findings, summary };
 }
 
 async function httpRequest(url, userAgent = 'WordPress-External-Security-Monitor/1.0') {
@@ -722,6 +783,10 @@ async function writeScanReport(startedAt, seconds, result) {
       lines.push(...bullet(`Página inicial: HTTP ${info.http.homeStatus}${info.http.finalUrl ? ` (${info.http.finalUrl})` : ''}.`));
       lines.push(...bullet(`xmlrpc.php: ${blocked(info.http.xmlrpcStatus)}.`));
       lines.push(...bullet(`Execução de PHP em uploads: ${blocked(info.http.uploadProbeStatus)}.`));
+      lines.push('', 'Arquivos da raiz');
+      lines.push(...bullet(`.htaccess: ${info.hardening.htaccess}.`));
+      lines.push(...bullet(`wp-content/.htaccess: ${info.hardening.wpContentHtaccess}.`));
+      lines.push(...bullet(`wp-config.php: ${info.hardening.wpConfig}.`));
       lines.push('', 'Banco de dados');
       if (!info.dbChecked) {
         lines.push(...bullet(site.db.enabled ? 'Não verificado (sem conexão com o banco).' : 'Não configurado.'));

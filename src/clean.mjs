@@ -16,6 +16,10 @@ import { assertSftp, connectSftpWithRetry, dataPaths, loadSites, sftpKey, writeF
 import { DROPIN_FILES, classifyPhp, isCacheRootPhp, isDropin } from './dropins.mjs';
 import { appendSection, bullet, dateBR, timeBR } from './report.mjs';
 import { RESOLVING_EVENTS, lastCleanupFinder, selectSites, siteArg } from './scope.mjs';
+import {
+  READ_ONLY_MODE, ROOT_HTACCESS, WP_CONFIG, WP_CONTENT_HTACCESS, WP_CONTENT_HTACCESS_CONTENT,
+  checkRootHtaccess, checkWpConfig, checkWpContentHtaccess, expectedRootHtaccess, fixWpConfig, formatMode, isReadOnly, loadHtaccessTemplate,
+} from './hardening.mjs';
 
 const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const { dataDir: DATA_DIR, reportsDir: REPORTS_DIR } = dataPaths(ROOT_DIR);
@@ -60,6 +64,7 @@ const PLAN_ONLY = process.argv.includes('--plan');
 // --site=<chave> limita o plano (e a execução) a um site; o painel passa o mesmo escopo nas duas etapas.
 const SITE_KEY = siteArg();
 const sites = selectSites(loadSites(), SITE_KEY);
+loadHtaccessTemplate();
 
 const automaticFileMessages = new Set([
   'Arquivo PHP encontrado dentro de uploads',
@@ -107,6 +112,15 @@ const ignoredInPlanMessages = new Set([
   'Links externos ocultos na home',
   // Também conferido ao vivo (sonda HTTP em uploads) e corrigido por ensure_uploads_htaccess.
   'Bloqueio de PHP em uploads não está ativo',
+  // Padrão da raiz: conferido ao vivo na montagem do plano e corrigido por restore_root_htaccess e
+  // ensure_wp_config_constants. A alteração desses dois arquivos (alerta genérico) continua indo para revisão manual.
+  'O .htaccess da raiz difere do padrão',
+  'O .htaccess da raiz não existe',
+  'wp-config.php sem os parâmetros obrigatórios',
+  'wp-config.php não encontrado na raiz',
+  'O .htaccess da raiz não está somente leitura',
+  'O .htaccess de wp-content difere do padrão',
+  'O .htaccess de wp-content não existe',
 ]);
 
 for (const alert of pendingAlerts) {
@@ -243,7 +257,10 @@ console.log(`\nLimpeza ${plan.id} concluída: ${completed.length} ação(ões). 
 async function writeCleanReport(status, { completed = [], verification = [], error = null } = {}) {
   try {
     const labels = {
-      delete_file: 'Arquivo removido', delete_directory: 'Pasta removida', ensure_uploads_htaccess: 'Bloqueio de PHP em uploads aplicado', delete_users: 'Usuários excluídos', delete_application_passwords: 'Application Passwords removidas',
+      delete_file: 'Arquivo removido', delete_directory: 'Pasta removida', ensure_uploads_htaccess: 'Bloqueio de PHP em uploads aplicado',
+      restore_root_htaccess: '.htaccess da raiz regravado com o padrão', ensure_wp_config_constants: 'Parâmetros obrigatórios aplicados no wp-config.php',
+      ensure_wp_content_htaccess: 'wp-content/.htaccess regravado com o padrão', make_root_htaccess_readonly: '.htaccess da raiz deixado somente leitura',
+      delete_users:'Usuários excluídos', delete_application_passwords: 'Application Passwords removidas',
       destroy_sessions: 'Sessões de login encerradas', disable_registration: 'Cadastro público desativado', delete_wpse_option: 'Opção wpse_user_id removida',
       restore_url: 'Endereço do site restaurado', remove_known_cron_hooks: 'Tarefas maliciosas removidas do WP-Cron', delete_malicious_options: 'Opções do malware removidas',
       remove_malicious_active_plugins: 'Plugins maliciosos retirados da lista de ativos', delete_malicious_snippets: 'Snippets maliciosos removidos',
@@ -251,7 +268,7 @@ async function writeCleanReport(status, { completed = [], verification = [], err
       remove_hidden_links_options: 'Links ocultos removidos de opções do banco',
     };
     const describe = (a) => {
-      const extra = a.type === 'delete_file' || a.type === 'delete_directory' || a.type === 'ensure_uploads_htaccess' ? `${a.path} (${a.reason})`
+      const extra = ['delete_file', 'delete_directory', 'ensure_uploads_htaccess', 'restore_root_htaccess', 'ensure_wp_config_constants', 'ensure_wp_content_htaccess', 'make_root_htaccess_readonly'].includes(a.type) ? `${a.path} (${a.reason})`
         : a.type === 'delete_users' ? `${a.logins?.length ? `${a.logins.join(', ')} — ` : ''}IDs ${a.ids.join(', ')}`
           : a.type === 'remove_known_cron_hooks' ? a.hooks.join(', ')
             : a.type === 'remove_malicious_active_plugins' ? a.plugins.join(', ')
@@ -564,6 +581,49 @@ async function inspectMalwareMarkers() {
             });
           }
         }
+        // Padrão da raiz, conferido agora (src/hardening.mjs): .htaccess diferente do modelo é regravado inteiro;
+        // wp-config.php recebe as constantes que faltam ou têm valor diferente. Sem ponto seguro de inserção no
+        // wp-config.php, vai para revisão manual.
+        const rootHtaccess = `${site.remoteRoot}/${ROOT_HTACCESS}`;
+        const htaccessNow = (await sftp.exists(rootHtaccess)) ? normalizeBuffer(await sftp.get(rootHtaccess)).toString('utf8') : null;
+        const htaccessDiff = checkRootHtaccess(htaccessNow, site.url);
+        if (htaccessDiff) {
+          actions.push({
+            type: 'restore_root_htaccess', site: site.key, path: ROOT_HTACCESS, mode: htaccessDiff.missing ? 'create' : 'replace',
+            reason: `${htaccessDiff.missing ? 'O .htaccess da raiz não existe; criar com o padrão'
+              : `O .htaccess da raiz difere do padrão (${htaccessDiff.extra.length} linha(s) a mais, ${htaccessDiff.absent.length} faltando); regravar com o padrão`} e deixar somente leitura`,
+          });
+        } else {
+          const { mode } = await sftp.stat(rootHtaccess);
+          if (!isReadOnly(mode)) {
+            actions.push({ type: 'make_root_htaccess_readonly', site: site.key, path: ROOT_HTACCESS, reason: `Permissão ${formatMode(mode)}; deixar somente leitura (${formatMode(READ_ONLY_MODE)})` });
+          }
+        }
+        const contentHtaccess = `${site.remoteRoot}/${WP_CONTENT_HTACCESS}`;
+        const contentDiff = checkWpContentHtaccess((await sftp.exists(contentHtaccess)) ? normalizeBuffer(await sftp.get(contentHtaccess)).toString('utf8') : null);
+        if (contentDiff && await sftp.exists(`${site.remoteRoot}/wp-content`)) {
+          actions.push({
+            type: 'ensure_wp_content_htaccess', site: site.key, path: WP_CONTENT_HTACCESS, mode: contentDiff.missing ? 'create' : 'replace',
+            reason: contentDiff.missing ? 'O .htaccess de wp-content não existe; criar com o padrão' : 'O .htaccess de wp-content difere do padrão; regravar com o padrão',
+          });
+        }
+        const wpConfig = `${site.remoteRoot}/${WP_CONFIG}`;
+        if (await sftp.exists(wpConfig)) {
+          const configNow = normalizeBuffer(await sftp.get(wpConfig)).toString('utf8');
+          const { missing, wrong } = checkWpConfig(configNow);
+          if (missing.length || wrong.length) {
+            if (fixWpConfig(configNow)) {
+              actions.push({
+                type: 'ensure_wp_config_constants', site: site.key, path: WP_CONFIG,
+                reason: [missing.length && `adicionar ${missing.join(', ')}`, wrong.length && `corrigir ${wrong.map((w) => `${w.name} (${w.atual} → ${w.esperado})`).join(', ')}`].filter(Boolean).join('; '),
+              });
+            } else {
+              plan.manualReview.push({ severity: 'high', site: site.key, message: 'wp-config.php sem os parâmetros obrigatórios e sem ponto seguro para inseri-los', details: { path: WP_CONFIG, faltando: missing } });
+            }
+          }
+        } else {
+          plan.manualReview.push({ severity: 'high', site: site.key, message: 'wp-config.php não encontrado na raiz', details: { path: WP_CONFIG } });
+        }
         // Pastas de plugin/tema maliciosas: desativar não basta, porque os webshells dentro delas respondem por URL
         // direta. São apagadas inteiras (com backup); um tema só depois de confirmar que não é o ativo.
         for (const [kind, isMalicious] of [['plugins', (name) => MALICIOUS_PLUGIN.test(name)], ['themes', (name) => MALICIOUS_THEME.test(name)]]) {
@@ -686,9 +746,82 @@ async function executeFileActions(actions, completed) {
         }
         const content = current === null ? UPLOADS_HTACCESS_CONTENT : `${current.replace(/\s*$/, '')}\n\n${UPLOADS_PHP_BLOCK}\n`;
         await sftp.put(Buffer.from(content, 'utf8'), remotePath);
+        await trustWrittenFile(site, sftp, action.path, Buffer.from(content, 'utf8'));
         completed.push(action);
         const probe = await probeStatus(site);
         console.log(`Bloqueio de PHP em uploads ${current === null ? 'criado' : 'acrescentado ao .htaccess existente'}: ${site.name}/${action.path} — sonda agora: HTTP ${probe ?? 'sem resposta'}${probe === 403 ? ' (bloqueado)' : ' (ATENÇÃO: ainda não bloqueia; o servidor pode ignorar .htaccess)'}`);
+        continue;
+      }
+      if (action.type === 'make_root_htaccess_readonly') {
+        if (action.path !== ROOT_HTACCESS || !await sftp.exists(remotePath)) continue;
+        await sftp.chmod(remotePath, READ_ONLY_MODE);
+        const { mode } = await sftp.stat(remotePath);
+        if (!isReadOnly(mode)) throw new Error(`O servidor não aceitou deixar ${site.name}/${action.path} somente leitura (permissão ${formatMode(mode)})`);
+        completed.push(action);
+        console.log(`.htaccess da raiz agora somente leitura: ${site.name} (${formatMode(mode)})`);
+        continue;
+      }
+      const FILE_STANDARD_PATHS = { restore_root_htaccess: ROOT_HTACCESS, ensure_wp_content_htaccess: WP_CONTENT_HTACCESS, ensure_wp_config_constants: WP_CONFIG };
+      if (FILE_STANDARD_PATHS[action.type]) {
+        if (action.path !== FILE_STANDARD_PATHS[action.type]) throw new Error(`Caminho inesperado para ${action.type}: ${action.path}`);
+        const isRootHtaccess = action.type === 'restore_root_htaccess';
+        const current = (await sftp.exists(remotePath)) ? normalizeBuffer(await sftp.get(remotePath)) : null;
+        const originalMode = current === null ? null : (await sftp.stat(remotePath)).mode & 0o777;
+        // O conteúdo é recalculado a partir do arquivo de agora, não do momento do plano. O wp-config.php é lido e
+        // gravado em latin1, que preserva os bytes originais qualquer que seja a codificação do arquivo.
+        let content;
+        if (isRootHtaccess) {
+          content = Buffer.from(expectedRootHtaccess(current === null ? null : current.toString('utf8'), site.url), 'utf8');
+          if (current !== null && current.equals(content) && isReadOnly(originalMode)) continue;
+        } else if (action.type === 'ensure_wp_content_htaccess') {
+          content = Buffer.from(WP_CONTENT_HTACCESS_CONTENT, 'utf8');
+          if (current !== null && current.equals(content)) continue;
+        } else {
+          if (current === null) { console.warn(`wp-config.php não encontrado em ${site.name}; nada alterado.`); continue; }
+          const fixed = fixWpConfig(current.toString('latin1'));
+          if (!fixed) { console.warn(`wp-config.php de ${site.name} sem ponto seguro para inserir os parâmetros; nada alterado.`); continue; }
+          if (!fixed.missing.length && !fixed.wrong.length) continue;
+          content = Buffer.from(fixed.content, 'latin1');
+        }
+        if (current !== null) {
+          const local = path.join(BACKUP_DIR, `${plan.id}-${site.key}-arquivos`, ...action.path.split('/'));
+          await fs.mkdir(path.dirname(local), { recursive: true });
+          await fs.writeFile(local, current);
+        }
+        // Se o site, que respondia, passa a dar erro 5xx ou não responder depois da gravação, o original volta na hora.
+        // wp-content/.htaccess vale para a pasta wp-content, então a conferência é em wp-content/index.php (o
+        // arquivo "silêncio é ouro" do WordPress); os demais, pela home.
+        const checkUrl = action.type === 'ensure_wp_content_htaccess' ? `${site.url}/wp-content/index.php` : `${site.url}/`;
+        const before = await urlStatus(checkUrl);
+        // Um arquivo somente leitura não aceita gravação: a escrita é liberada só durante a troca.
+        if (current !== null && isReadOnly(originalMode)) await sftp.chmod(remotePath, 0o644);
+        await sftp.put(content, remotePath);
+        const after = await urlStatus(checkUrl);
+        if (before !== null && before < 500 && (after === null || after >= 500)) {
+          if (current !== null) {
+            await sftp.put(current, remotePath);
+            await sftp.chmod(remotePath, originalMode);
+          } else {
+            await sftp.delete(remotePath, false);
+          }
+          const restored = await urlStatus(checkUrl);
+          console.warn(`ATENÇÃO: ${site.name}/${action.path} no padrão derrubou o site (HTTP ${after ?? 'sem resposta'}); o arquivo anterior foi restaurado (HTTP ${restored ?? 'sem resposta'}).`);
+          plan.manualReview.push({ severity: 'critical', site: site.key, message: `${action.path} no padrão derrubou o site e foi revertido; confira manualmente`, details: { path: action.path, status: after } });
+          continue;
+        }
+        if (isRootHtaccess) {
+          await sftp.chmod(remotePath, READ_ONLY_MODE);
+        } else if (current !== null && isReadOnly(originalMode)) {
+          await sftp.chmod(remotePath, originalMode);
+        }
+        await trustWrittenFile(site, sftp, action.path, content);
+        completed.push(action);
+        const done = {
+          restore_root_htaccess: `.htaccess da raiz ${current === null ? 'criado' : 'regravado'} com o padrão e somente leitura`,
+          ensure_wp_content_htaccess: `wp-content/.htaccess ${current === null ? 'criado' : 'regravado'} com o padrão`,
+          ensure_wp_config_constants: 'Parâmetros obrigatórios aplicados no wp-config.php',
+        }[action.type];
+        console.log(`${done}: ${site.name} — ${checkUrl.endsWith('/') ? 'home' : 'wp-content/index.php'} HTTP ${after}`);
         continue;
       }
       if (action.type === 'delete_directory') {
@@ -922,6 +1055,30 @@ function cleanOptionValue(raw, siteHost) {
   return { ok: true, value, removed };
 }
 
+// Arquivo gravado pela própria limpeza: o hash, o tamanho e a data dele entram no state.json e na baseline, para a
+// próxima varredura não acusar "Arquivo monitorado foi alterado" por uma mudança que a limpeza fez.
+async function trustWrittenFile(site, sftp, relativePath, content) {
+  const stat = await sftp.stat(`${site.remoteRoot}/${relativePath}`);
+  const entry = { hash: crypto.createHash('sha256').update(content).digest('hex'), size: stat.size, mtime: stat.modifyTime };
+  for (const file of [STATE_FILE, BASELINE_FILE]) {
+    const data = await readJson(file, null);
+    if (!data?.sites?.[site.key]?.files) continue;
+    data.sites[site.key].files[relativePath] = entry;
+    await writeFileAtomic(file, `${JSON.stringify(data, null, 2)}\n`);
+  }
+  if (baseline.sites?.[site.key]?.files) baseline.sites[site.key].files[relativePath] = entry;
+}
+
+// Status HTTP de uma URL do site (null = sem resposta).
+async function urlStatus(url) {
+  try {
+    const response = await fetch(`${url}?nocache=${Date.now()}`, { redirect: 'follow', signal: AbortSignal.timeout(20000) });
+    return response.status;
+  } catch {
+    return null;
+  }
+}
+
 // Status HTTP da sonda de PHP em uploads (null = sem resposta: não conclui nada).
 async function probeStatus(site) {
   try {
@@ -1000,6 +1157,10 @@ function printPlan(value) {
   console.log(`\nPlano ${value.id} — ${value.scope ? `só o site ${value.scope.join(', ')}` : 'todos os sites'}`);
   for (const action of value.fileActions) {
     if (action.type === 'ensure_uploads_htaccess') console.log(`  [ARQUIVO] ${action.mode === 'create' ? 'criar' : 'complementar'} ${action.site}/${action.path} — ${action.reason}`);
+    else if (action.type === 'restore_root_htaccess') console.log(`  [ARQUIVO] ${action.mode === 'create' ? 'criar' : 'regravar'} ${action.site}/${action.path} — ${action.reason}`);
+    else if (action.type === 'ensure_wp_content_htaccess') console.log(`  [ARQUIVO] ${action.mode === 'create' ? 'criar' : 'regravar'} ${action.site}/${action.path} — ${action.reason}`);
+    else if (action.type === 'ensure_wp_config_constants') console.log(`  [ARQUIVO] ajustar ${action.site}/${action.path} — ${action.reason}`);
+    else if (action.type === 'make_root_htaccess_readonly') console.log(`  [PERMISSÃO] ${action.site}/${action.path} — ${action.reason}`);
     else console.log(`  [${action.type === 'delete_directory' ? 'PASTA' : 'ARQUIVO'}] excluir ${action.site}/${action.path} — ${action.reason}`);
   }
   for (const action of value.databaseActions) console.log(`  [BANCO] ${action.site}: ${action.type} — ${action.reason}`);

@@ -25,6 +25,8 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./
 COPY src ./src
+# Modelo do .htaccess da raiz dos sites (conferido pela varredura e aplicado pela limpeza).
+COPY templates ./templates
 COPY server ./server
 COPY --from=web /web/dist ./web/dist
 # .env, .monitor-data e reports chegam por volume (docker-compose.yml); as pastas existem para o caso de rodar sem volume.

@@ -343,6 +343,18 @@ Known malicious plugin and theme folders (`MALICIOUS_PLUGIN` list and `category_
 
 **PHP blocking in uploads.** The plan tests the monitor's probe (`/wp-content/uploads/wp-monitor-probe.php`) live. Without a 403, cleanup creates the standard `wp-content/uploads/.htaccess` (`Options -Indexes` + `FilesMatch` `(?i)\.(php[0-9]*|phtml|phar|phps)$` with `Require all denied`) or, if an `.htaccess` without the block already exists, appends the block at the end, keeping other plugins' rules and backing up the original. After writing, the probe is tested again. If the block is already in the file and the probe still does not return 403, the server ignores `.htaccess` (e.g. Nginx) and the item goes to manual review.
 
+**Root files standard** (`src/hardening.mjs`). The scan checks these every cycle and cleanup fixes them:
+
+- **The root `.htaccess` is identical to `templates/root.htaccess`.** If it differs, cleanup wipes it and writes the template. Only the target of `RewriteRule . /index.php [L]` and the `RewriteBase` are kept from the original, for sites in a subfolder, and only if the target is an `index.php`. The cPanel PHP-version block is kept when it holds only the `AddHandler`. Other plugins' cache rules (LiteSpeed, Newfold...) are removed.
+- **The root `.htaccess` is read-only (0444).** Cleanup allows writing only during its own write.
+- **`wp-content/.htaccess` holds the standard content** (`<Files .htaccess>` with `Order Allow,Deny` / `Deny from all`). Cleanup creates it if missing.
+- **`wp-config.php` holds the required constants:** `DISALLOW_FILE_EDIT` true, `AUTOMATIC_UPDATER_DISABLED` false, `WP_AUTO_UPDATE_CORE` true or `'minor'`, `FORCE_SSL_ADMIN` true, `DISALLOW_FILE_MODS` true, `AUTOSAVE_INTERVAL` 180, `WP_POST_REVISIONS` 10, `EMPTY_TRASH_DAYS` 15 and `WP_CRON_LOCK_TIMEOUT` 120.
+  - Missing constants are inserted before the "stop editing" comment (or the `wp-settings.php` require).
+  - Constants with a different value are changed on their own line.
+  - With no safe insertion point, the item goes to manual review.
+
+Every write backs up the original and checks the home page (or `wp-content/index.php`) before and after. If the site starts returning 5xx or stops responding, the previous file is restored at once and the item goes to manual review. The written file's hash is stored in `state.json` and the baseline, so the next scan does not report "Arquivo monitorado foi alterado" for a change made by cleanup itself. This also applies to the uploads `.htaccess`.
+
 **Allowed users per site** (Settings › Connections › edit site): with the list filled in, cleanup deletes any other WordPress login without manual review. The deleted user's content is reassigned to the first allowed user and the users are backed up. If no login from the list exists in the database, nothing is deleted.
 
 In the panel's Cleanup Center, each manual-review item shows its real reason and the file or folder name and path. Items that point to a file or folder get a **Delete** button: the panel backs it up, deletes it and records it in the daily report after the operator types the `EXCLUIR-<code>` shown on screen. Only paths listed in an item of the latest plan are accepted, `wp-config.php` and other core entry files are refused, and it never runs during a scan or cleanup.

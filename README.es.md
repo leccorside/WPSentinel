@@ -343,6 +343,18 @@ Las carpetas de plugins y temas maliciosos conocidos (lista `MALICIOUS_PLUGIN` y
 
 **Bloqueo de PHP en uploads.** El plan prueba en el momento la sonda del monitor (`/wp-content/uploads/wp-monitor-probe.php`). Sin 403, la limpieza crea el `wp-content/uploads/.htaccess` estándar (`Options -Indexes` + `FilesMatch` `(?i)\.(php[0-9]*|phtml|phar|phps)$` con `Require all denied`) o, si ya existe un `.htaccess` sin el bloqueo, añade el bloque al final, sin borrar reglas de otros plugins y con respaldo del original. Tras grabar, la sonda se prueba de nuevo. Si el bloqueo ya está en el archivo y aun así la sonda no devuelve 403, el servidor ignora `.htaccess` (p. ej. Nginx) y el ítem pasa a revisión manual.
 
+**Estándar de los archivos de la raíz** (`src/hardening.mjs`). El escaneo los comprueba en cada ciclo y la limpieza los corrige:
+
+- **El `.htaccess` de la raíz es idéntico a `templates/root.htaccess`.** Si difiere, la limpieza lo borra entero y graba la plantilla. Solo el destino de `RewriteRule . /index.php [L]` y el `RewriteBase` siguen al original, cuando el sitio está en una subcarpeta, y solo si el destino es un `index.php`. El bloque de cPanel con la versión de PHP se conserva si solo tiene el `AddHandler`. Las reglas de caché de otros plugins (LiteSpeed, Newfold...) se eliminan.
+- **El `.htaccess` de la raíz es de solo lectura (0444).** La limpieza permite escribir solo durante su propia grabación.
+- **`wp-content/.htaccess` tiene el contenido estándar** (`<Files .htaccess>` con `Order Allow,Deny` / `Deny from all`). La limpieza lo crea si no existe.
+- **`wp-config.php` tiene las constantes obligatorias:** `DISALLOW_FILE_EDIT` true, `AUTOMATIC_UPDATER_DISABLED` false, `WP_AUTO_UPDATE_CORE` true o `'minor'`, `FORCE_SSL_ADMIN` true, `DISALLOW_FILE_MODS` true, `AUTOSAVE_INTERVAL` 180, `WP_POST_REVISIONS` 10, `EMPTY_TRASH_DAYS` 15 y `WP_CRON_LOCK_TIMEOUT` 120.
+  - Las que faltan se insertan antes del comentario "stop editing" (o del `require` de `wp-settings.php`).
+  - Las que tienen otro valor se cambian en su propia línea.
+  - Sin un punto seguro de inserción, el ítem pasa a revisión manual.
+
+Cada grabación respalda el original y comprueba la portada (o `wp-content/index.php`) antes y después. Si el sitio empieza a dar 5xx o deja de responder, el archivo anterior se restaura al momento y el ítem pasa a revisión manual. El hash del archivo grabado entra en `state.json` y en la línea base, para que el siguiente escaneo no avise "Arquivo monitorado foi alterado" por un cambio hecho por la propia limpieza. Esto vale también para el `.htaccess` de uploads.
+
 **Usuarios permitidos por sitio** (Configuración › Conexiones › editar sitio): con la lista completada, la limpieza elimina cualquier otro login de WordPress sin revisión manual. El contenido del usuario eliminado pasa al primer usuario permitido y los usuarios quedan en el respaldo. Si ningún login de la lista existe en la base de datos, no se elimina nada.
 
 En la Central de Limpieza del panel, cada ítem de revisión manual muestra el motivo real y el nombre y la ruta del archivo o carpeta. Los ítems que apuntan a un archivo o carpeta tienen el botón **Eliminar**: el panel hace el respaldo, lo borra y lo registra en el informe del día después de que el operador escribe el código `EXCLUIR-<código>` que aparece en pantalla. Solo acepta rutas presentes en un ítem del último plan, rechaza `wp-config.php` y otros archivos centrales, y nunca se ejecuta durante un escaneo o limpieza.

@@ -373,6 +373,28 @@ acrescenta o bloco ao final, sem apagar regras de outros plugins e com backup do
 é testada de novo. Se o bloqueio já está no arquivo e mesmo assim a sonda não dá 403, o servidor ignora `.htaccess`
 (ex.: Nginx) e o item vai para a revisão manual.
 
+**Padrão dos arquivos da raiz** (`src/hardening.mjs`). A varredura confere em todo ciclo, e a limpeza corrige:
+
+- **`.htaccess` da raiz idêntico a `templates/root.htaccess`.** Se diferir, a limpeza apaga tudo e grava o modelo.
+  Só o destino do `RewriteRule . /index.php [L]` e o `RewriteBase` seguem o original, quando o site está numa
+  subpasta (aceito apenas se o destino for um `index.php`). O bloco do cPanel com a versão do PHP é preservado,
+  desde que tenha só o `AddHandler`. Regras de cache de outros plugins (LiteSpeed, Newfold...) saem.
+- **`.htaccess` da raiz somente leitura (0444).** A limpeza libera a escrita só durante a própria gravação.
+- **`wp-content/.htaccess` com o padrão** (`<Files .htaccess>` com `Order Allow,Deny` / `Deny from all`), criado se
+  não existir.
+- **`wp-config.php` com as constantes obrigatórias:** `DISALLOW_FILE_EDIT` true, `AUTOMATIC_UPDATER_DISABLED`
+  false, `WP_AUTO_UPDATE_CORE` true ou `'minor'`, `FORCE_SSL_ADMIN` true, `DISALLOW_FILE_MODS` true,
+  `AUTOSAVE_INTERVAL` 180, `WP_POST_REVISIONS` 10, `EMPTY_TRASH_DAYS` 15 e `WP_CRON_LOCK_TIMEOUT` 120.
+  - As que faltam entram antes do comentário "stop editing"/"pare de editar" (ou do `require` do
+    `wp-settings.php`).
+  - As que têm valor diferente são trocadas na própria linha.
+  - Sem ponto seguro de inserção, o item vai para a revisão manual.
+
+Toda gravação faz backup do original e confere a home (ou `wp-content/index.php`) antes e depois. Se o site passar a
+dar 5xx ou não responder, o arquivo anterior volta na hora e o item vai para a revisão manual. O hash do arquivo
+gravado entra no `state.json` e na baseline, para a próxima varredura não acusar "Arquivo monitorado foi alterado"
+por uma mudança da própria limpeza (vale também para o `.htaccess` de uploads).
+
 **Usuários permitidos por site** (Configurações › Conexões › editar site): com a lista preenchida, a limpeza exclui
 qualquer outro login do WordPress, sem revisão manual. O conteúdo do excluído é transferido para o primeiro usuário
 permitido e os usuários vão para o backup. Se nenhum login da lista existir no banco, nada é excluído.

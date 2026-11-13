@@ -565,6 +565,14 @@ export function CleanupView({
                                 ? `Remoção de ${action.path?.includes('/themes/') ? 'Tema' : 'Plugin'} Malicioso (pasta inteira)`
                                 : action.type === 'ensure_uploads_htaccess'
                                 ? `Bloqueio de PHP em uploads (${action.mode === 'create' ? 'criar .htaccess' : 'complementar .htaccess'})`
+                                : action.type === 'restore_root_htaccess'
+                                ? `.htaccess da raiz no padrão (${action.mode === 'create' ? 'criar' : 'regravar'}, somente leitura)`
+                                : action.type === 'ensure_wp_content_htaccess'
+                                ? `.htaccess de wp-content no padrão (${action.mode === 'create' ? 'criar' : 'regravar'})`
+                                : action.type === 'ensure_wp_config_constants'
+                                ? 'Parâmetros obrigatórios no wp-config.php'
+                                : action.type === 'make_root_htaccess_readonly'
+                                ? '.htaccess da raiz somente leitura'
                                 : 'Exclusão de Arquivo Malicioso'}
                             </span>
                             <span className="px-2 py-0.5 bg-error-container text-on-error-container font-mono text-[10px] uppercase rounded">

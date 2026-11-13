@@ -1,0 +1,88 @@
+###########################################################
+# SEGURANÇA
+###########################################################
+
+# Desabilita listagem de diretórios
+Options -Indexes
+
+# Desabilita assinatura do servidor
+ServerSignature Off
+
+# Bloqueia acesso a arquivos ocultos (.git, .env, etc.)
+RedirectMatch 403 /\.(?!well-known/).*$
+
+# Bloqueia acesso ao wp-config.php
+<Files wp-config.php>
+    Require all denied
+</Files>
+
+# Bloqueia o XML-RPC, que nao e utilizado neste site
+<Files xmlrpc.php>
+    Require all denied
+</Files>
+
+# Bloqueia acesso ao .htaccess
+<Files .htaccess>
+    Require all denied
+</Files>
+
+# Bloqueia arquivos sensíveis
+<FilesMatch "^(readme\.html|license\.txt|composer\.(json|lock)|package\.json|package-lock\.json|yarn\.lock|phpunit\.xml|\.env)$">
+    Require all denied
+</FilesMatch>
+
+# Bloqueia arquivos de backup
+<FilesMatch "\.(bak|config|dist|fla|inc|ini|log|psd|sh|sql|swp)$">
+    Require all denied
+</FilesMatch>
+
+# Desabilita TRACE e TRACK
+RewriteEngine On
+RewriteCond %{REQUEST_METHOD} ^(TRACE|TRACK)
+RewriteRule .* - [F]
+
+###########################################################
+# CABEÇALHOS DE SEGURANÇA
+###########################################################
+
+<IfModule mod_headers.c>
+
+Header always unset X-Powered-By
+
+Header always set X-Frame-Options "SAMEORIGIN"
+
+Header always set X-Content-Type-Options "nosniff"
+
+Header always set Referrer-Policy "strict-origin-when-cross-origin"
+
+Header always set Permissions-Policy "geolocation=(), camera=(), microphone=()"
+
+Header always set Strict-Transport-Security "max-age=31536000"
+
+Header always set X-XSS-Protection "0"
+
+</IfModule>
+
+##############################################
+# WORDPRESS
+##############################################
+
+# BEGIN WordPress
+# As diretrizes (linhas) entre "BEGIN WordPress" e "END WordPress" são
+# geradas dinamicamente e só devem ser modificadas através de filtros do WordPress.
+# Quaisquer alterações nas diretivas entre esses marcadores serão sobrescritas.
+<IfModule mod_rewrite.c>
+RewriteEngine On
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+RewriteBase /
+RewriteRule ^index\.php$ - [L]
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule . /index.php [L]
+</IfModule>
+
+# END WordPress
+
+# php -- BEGIN cPanel-generated handler, do not edit
+# Este domínio herda o pacote “PHP”.
+# php -- END cPanel-generated handler, do not edit
