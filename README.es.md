@@ -114,6 +114,7 @@ WP Sentinel es un **monitor externo, sin agentes y de solo lectura durante los a
 - Marcadores de malware en la raíz de WordPress, `wp-content` y `mu-plugins`: `sc_XXXXXX`, `scgXXXXXX`, `z`, `.sc_*`, `.kk_*`, `.gk_*`, `.gt_*`, `.grd_*`, `.sd_*`, `.bt_*`, `.swm_*`, `.rd_*` (hasta 64 bytes). Generan alertas críticas por directorio. La regla está en `src/malware-markers.mjs` y se reutiliza en la limpieza.
 - PHP en `uploads`, archivos PHP ocultos, nombres peligrosos y firmas de webshell.
 - Drop-ins (`wp-content/db.php`, `advanced-cache.php`, `object-cache.php`) y PHP suelto en `wp-content/cache/` (se excluyen los subdirectorios de plugins de caché). `src/dropins.mjs` reconoce plugins conocidos (W3 Total Cache, WP Super Cache, LiteSpeed, Redis Object Cache, Query Monitor, etc.), orígenes desconocidos y firmas maliciosas u ofuscación. Los archivos maliciosos generan alertas críticas en cada ciclo; los de origen desconocido generan alertas altas al aparecer o cambiar; los drop-ins legítimos conocidos no generan alertas.
+- PHP en `wp-content/mu-plugins` (se carga en cada petición, sin activación), clasificado por `src/mu-plugins.mjs`. Un archivo es malicioso si tiene un timestamp Unix en el nombre, texto antes de `<?php`, ofuscación XOR con nombres de función armados con `chr()` o una firma de malware. Los maliciosos generan alertas críticas en cada ciclo. La home también se revisa cuando responde HTTP 200: una página en blanco o incompleta, o un comentario aleatorio inyectado antes del HTML, genera una alerta crítica.
 - Sesiones de acceso (`session_tokens`): cada sesión nueva genera una alerta alta; si procede de la IP del propio servidor o tiene un navegador `WordPress/...` o vacío, genera una crítica. Las IP del servidor se obtienen de los dominios, `SFTP_HOST`, `DB_HOST` y la variable opcional `SERVER_IPS`.
 - **Spam SEO oculto:** enlaces a otros dominios dentro de bloques `position: fixed/absolute` con coordenadas de −100 px o menores. Comprueba el HTML de inicio como navegador y como Googlebot, y `_elementor_data` y `post_content` de páginas, entradas y plantillas en la base de datos. Las alertas críticas indican páginas, widgets y dominios. Regla en `src/hidden-links.mjs`.
 - Disponibilidad HTTP, redirecciones entre dominios, cabeceras de seguridad y bloqueo de `xmlrpc.php` y PHP ejecutable en `uploads`.
@@ -335,7 +336,7 @@ Ejecuta `run-cleanup.cmd` después de revisar las alertas. La herramienta:
 
 Usa `npm run plan` para crear y revisar el plan **sin ejecutar la limpieza**.
 
-Puede eliminar drop-ins y PHP suelto en `wp-content/cache/` cuando se clasifican como maliciosos; los de origen desconocido se revisan manualmente. Cada archivo eliminado se respalda en `.monitor-data/backups/`.
+Puede eliminar drop-ins, PHP suelto en `wp-content/cache/` y mu-plugins cuando se clasifican como maliciosos; los de origen desconocido (y los mu-plugins de más de 1 MB) se revisan manualmente. Cada archivo eliminado se respalda en `.monitor-data/backups/`.
 
 Las carpetas de plugins y temas maliciosos conocidos (lista `MALICIOUS_PLUGIN` y temas `category_template_17781NNNNN` en `src/clean.mjs`) se eliminan completas, porque desactivarlas no basta: los webshells que contienen responden por URL directa. Antes de borrar, la carpeta se descarga al respaldo y se compara el número de archivos; si no coincide, no se borra nada. Un tema nunca se borra si es el tema activo (`template`/`stylesheet`). `code-snippets` y `fileorganizer` también se eliminan (legítimos en el repositorio, pero usados por el atacante). También entran los plugins **parecidos** aún desconocidos: por un nombre con el patrón del kit (sufijo hexadecimal, número de fecha `17781NNNNN`, `cloudflare-vN-NN`) o, en plugins pequeños (hasta 5 elementos, sin subcarpetas) y `.php` sueltos en `plugins/`, por el contenido (código ofuscado controlado por la petición, o que se oculta de la lista de plugins).
 
@@ -432,6 +433,7 @@ Los informes pueden contener nombres de usuario, direcciones IP y rutas del serv
 | `reports/REPORT-DD.MM.AA.txt` | Informes diarios (hora de Brasilia). |
 | `src/malware-markers.mjs` | Reglas de marcadores de malware. |
 | `src/dropins.mjs` | Clasificación de drop-ins. |
+| `src/mu-plugins.mjs` | Clasificación de los PHP en `wp-content/mu-plugins`. |
 | `src/hidden-links.mjs` | Detección de enlaces ocultos. |
 
 </details>

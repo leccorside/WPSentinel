@@ -14,6 +14,7 @@ import { cleanElementorRaw, findHiddenBlocks, scanElementorData, stripHiddenBloc
 import { MARKER_DIRS, isMalwareMarker } from './malware-markers.mjs';
 import { assertSftp, connectSftpWithRetry, dataPaths, loadSites, sftpKey, writeFileAtomic } from './config.mjs';
 import { DROPIN_FILES, classifyPhp, isCacheRootPhp, isDropin } from './dropins.mjs';
+import { MU_PLUGINS_DIR, MU_PLUGIN_MAX_BYTES, classifyMuPlugin, isMuPluginPhp } from './mu-plugins.mjs';
 import { appendSection, bullet, dateBR, timeBR } from './report.mjs';
 import { RESOLVING_EVENTS, lastCleanupFinder, selectSites, siteArg } from './scope.mjs';
 import {
@@ -121,6 +122,8 @@ const ignoredInPlanMessages = new Set([
   'O .htaccess da raiz não está somente leitura',
   'O .htaccess de wp-content difere do padrão',
   'O .htaccess de wp-content não existe',
+  // mu-plugins são classificados ao vivo na montagem do plano (src/mu-plugins.mjs) e os maliciosos viram delete_file.
+  'mu-plugin malicioso',
 ]);
 
 for (const alert of pendingAlerts) {
@@ -563,6 +566,20 @@ async function inspectMalwareMarkers() {
             actions.push({ type: 'delete_file', site: site.key, path: rel, reason: `${isDropin(rel) ? 'Drop-in malicioso' : 'PHP malicioso em wp-content/cache'} (${reason})` });
           } else if (verdict === 'unknown') {
             plan.manualReview.push({ severity: 'high', site: site.key, message: `${isDropin(rel) ? 'Drop-in' : 'PHP em wp-content/cache'} sem origem reconhecida; confira antes de apagar`, details: { path: rel } });
+          }
+        }
+        // PHP em mu-plugins: carregado em toda requisição sem ativação. Malicioso pelo nome ou conteúdo → apagado.
+        const muDir = `${site.remoteRoot}/${MU_PLUGINS_DIR}`;
+        if (await sftp.exists(muDir)) {
+          for (const entry of await sftp.list(muDir)) {
+            const rel = `${MU_PLUGINS_DIR}/${entry.name}`;
+            if (entry.type !== '-' || !isMuPluginPhp(rel)) continue;
+            if (entry.size > MU_PLUGIN_MAX_BYTES) {
+              plan.manualReview.push({ severity: 'high', site: site.key, message: 'mu-plugin acima do limite de inspeção; confira antes de apagar', details: { path: rel, size: entry.size } });
+              continue;
+            }
+            const { verdict, reason } = classifyMuPlugin(rel, normalizeBuffer(await sftp.get(`${site.remoteRoot}/${rel}`)).toString('latin1'));
+            if (verdict === 'malicious') actions.push({ type: 'delete_file', site: site.key, path: rel, reason: `mu-plugin malicioso (${reason})` });
           }
         }
         // Bloqueio de PHP em uploads, conferido agora pela sonda (403 = bloqueado). Sem bloqueio: cria o .htaccess ou

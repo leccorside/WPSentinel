@@ -113,6 +113,10 @@ todos no `.env` (nada de site fica no código), então ele serve para qualquer W
   (assinatura de malware ou código ofuscado) gera alerta crítico em todo ciclo; origem não reconhecida gera
   alerta alto quando o arquivo aparece ou muda; drop-in de plugin conhecido (W3 Total Cache, WP Super Cache,
   LiteSpeed, Redis Object Cache, Query Monitor etc.) não gera alerta;
+- PHP em `wp-content/mu-plugins` (carregado em toda requisição, sem ativação), classificado em
+  `src/mu-plugins.mjs`. É malicioso quando tem timestamp no nome, texto antes do `<?php`, ofuscação XOR com funções
+  montadas por `chr()` ou assinatura de malware, e gera alerta crítico em todo ciclo. A home com HTTP 200 também é
+  conferida: página em branco ou incompleta, ou comentário injetado antes do HTML, gera alerta crítico;
 - sessões de login (`session_tokens`): toda sessão nova gera alerta alto; sessões abertas a partir
   do IP do próprio servidor ou com navegador `WordPress/...` (ou vazio) geram alerta crítico. Os IPs
   do servidor vêm do domínio de cada site, do `SFTP_HOST`, do `DB_HOST` e da variável opcional `SERVER_IPS`;
@@ -346,7 +350,8 @@ Use `npm run plan` para apenas gerar e visualizar o plano, sem abrir uma
 confirmação de limpeza.
 
 Também remove drop-ins e PHP em `wp-content/cache/` classificados como maliciosos (os de origem não
-reconhecida vão para revisão manual). Todo arquivo apagado pela limpeza tem cópia em
+reconhecida vão para revisão manual), além dos mu-plugins maliciosos (acima de 1 MB, revisão manual).
+Todo arquivo apagado pela limpeza tem cópia em
 `.monitor-data/backups/<plano>-<site>-arquivos/`.
 
 Pastas de plugin e tema maliciosas conhecidas (lista `MALICIOUS_PLUGIN` e temas `category_template_17781NNNNN`
@@ -507,6 +512,7 @@ O arquivo `.env` contém segredos e está ignorado pelo Git. Não o envie por e-
 | `reports/REPORT-DD.MM.AA.txt` | Relatórios diários no horário de Brasília. |
 | `src/malware-markers.mjs` | Regras de marcadores suspeitos. |
 | `src/dropins.mjs` | Classificação de drop-ins. |
+| `src/mu-plugins.mjs` | Classificação dos PHP em `wp-content/mu-plugins`. |
 | `src/hidden-links.mjs` | Detecção de links ocultos. |
 
 </details>

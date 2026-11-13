@@ -13,6 +13,7 @@ import { lookupServerIps, parseSessions, suspiciousReasons } from './sessions.mj
 import { MARKER_DIRS, isMalwareMarker } from './malware-markers.mjs';
 import { assertSftp, connectSftpWithRetry, dataPaths, loadSites, sftpKey, writeFileAtomic } from './config.mjs';
 import { classifyPhp, isCacheRootPhp, isDropin } from './dropins.mjs';
+import { MU_PLUGIN_MAX_BYTES, classifyMuPlugin, isMuPluginPhp } from './mu-plugins.mjs';
 import { appendSection, bullet, dateBR, number, timeBR } from './report.mjs';
 import { selectSites, siteArg } from './scope.mjs';
 import {
@@ -193,6 +194,18 @@ async function runCycle() {
       } else if (verdict === 'unknown' && isNewOrChanged) {
         await emitAlert('high', site.key, dropin ? 'Drop-in sem origem reconhecida' : 'PHP em wp-content/cache sem origem reconhecida', { path: rel, size: file.size });
         totals.high += 1;
+      }
+    }
+
+    // PHP em mu-plugins (carregado em toda requisição, sem ativação): malicioso pelo nome ou conteúdo → crítico em
+    // todo ciclo, até a limpeza remover (src/mu-plugins.mjs).
+    for (const file of remoteFiles) {
+      const rel = file.path.slice(site.remoteRoot.length).replace(/^\//, '');
+      if (!isMuPluginPhp(rel) || file.size > MU_PLUGIN_MAX_BYTES) continue;
+      const { verdict, reason } = classifyMuPlugin(rel, normalizeBuffer(await sftp.get(file.path)).toString('latin1'));
+      if (verdict === 'malicious') {
+        await emitAlert('critical', site.key, 'mu-plugin malicioso', { path: rel, motivo: reason, size: file.size });
+        totals.critical += 1;
       }
     }
 
@@ -433,6 +446,15 @@ async function inspectHttp(site) {
   // SEO spam: links externos em blocos posicionados fora da tela. A home também é pedida como Googlebot,
   // porque esse tipo de injeção às vezes só aparece para o buscador.
   const homeHtml = typeof home.text === 'function' ? await home.text().catch(() => '') : '';
+  // HTTP 200 com a página em branco (13/11/2026: só "<!--EuQYiXmr-->", impresso por um mu-plugin malicioso) ou com
+  // um comentário aleatório injetado antes do HTML.
+  if (home.status >= 200 && home.status < 300) {
+    if (!/<html[\s>]/i.test(homeHtml) || !/<\/body>/i.test(homeHtml)) {
+      findings.push({ severity: 'critical', message: 'Home em branco ou incompleta', details: { status: home.status, bytes: homeHtml.length, inicio: homeHtml.trim().slice(0, 80) } });
+    }
+    const injected = homeHtml.match(/^\s*(<!--[A-Za-z0-9]{6,12}-->)/)?.[1];
+    if (injected) findings.push({ severity: 'critical', message: 'Saída injetada antes do HTML da home', details: { trecho: injected } });
+  }
   const asGooglebot = await httpRequest(`${site.url}/`, 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)');
   const googlebotHtml = typeof asGooglebot.text === 'function' ? await asGooglebot.text().catch(() => '') : '';
   for (const [agent, html] of [['navegador', homeHtml], ['Googlebot', googlebotHtml]]) {
