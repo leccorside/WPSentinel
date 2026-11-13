@@ -348,7 +348,7 @@ Las carpetas de plugins y temas maliciosos conocidos (lista `MALICIOUS_PLUGIN` y
 - **El `.htaccess` de la raíz es idéntico a `templates/root.htaccess`.** Si difiere, la limpieza lo borra entero y graba la plantilla. Solo el destino de `RewriteRule . /index.php [L]` y el `RewriteBase` siguen al original, cuando el sitio está en una subcarpeta, y solo si el destino es un `index.php`. El bloque de cPanel con la versión de PHP se conserva si solo tiene el `AddHandler`. Las reglas de caché de otros plugins (LiteSpeed, Newfold...) se eliminan.
 - **El `.htaccess` de la raíz es de solo lectura (0444).** La limpieza permite escribir solo durante su propia grabación.
 - **`wp-content/.htaccess` tiene el contenido estándar** (`<Files .htaccess>` con `Order Allow,Deny` / `Deny from all`). La limpieza lo crea si no existe.
-- **`wp-config.php` tiene las constantes obligatorias:** `DISALLOW_FILE_EDIT` true, `AUTOMATIC_UPDATER_DISABLED` false, `WP_AUTO_UPDATE_CORE` true o `'minor'`, `FORCE_SSL_ADMIN` true, `DISALLOW_FILE_MODS` true, `AUTOSAVE_INTERVAL` 180, `WP_POST_REVISIONS` 10, `EMPTY_TRASH_DAYS` 15 y `WP_CRON_LOCK_TIMEOUT` 120.
+- **`wp-config.php` tiene las constantes obligatorias:** `DISALLOW_FILE_EDIT` true, `AUTOMATIC_UPDATER_DISABLED` false, `WP_AUTO_UPDATE_CORE` `'minor'` (true también se acepta), `FORCE_SSL_ADMIN` true, `DISALLOW_FILE_MODS` true, `AUTOSAVE_INTERVAL` 180, `WP_POST_REVISIONS` 10, `EMPTY_TRASH_DAYS` 15 y `WP_CRON_LOCK_TIMEOUT` 120.
   - Las que faltan se insertan antes del comentario "stop editing" (o del `require` de `wp-settings.php`).
   - Las que tienen otro valor se cambian en su propia línea.
   - Sin un punto seguro de inserción, el ítem pasa a revisión manual.

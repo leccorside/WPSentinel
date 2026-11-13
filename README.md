@@ -348,7 +348,7 @@ Known malicious plugin and theme folders (`MALICIOUS_PLUGIN` list and `category_
 - **The root `.htaccess` is identical to `templates/root.htaccess`.** If it differs, cleanup wipes it and writes the template. Only the target of `RewriteRule . /index.php [L]` and the `RewriteBase` are kept from the original, for sites in a subfolder, and only if the target is an `index.php`. The cPanel PHP-version block is kept when it holds only the `AddHandler`. Other plugins' cache rules (LiteSpeed, Newfold...) are removed.
 - **The root `.htaccess` is read-only (0444).** Cleanup allows writing only during its own write.
 - **`wp-content/.htaccess` holds the standard content** (`<Files .htaccess>` with `Order Allow,Deny` / `Deny from all`). Cleanup creates it if missing.
-- **`wp-config.php` holds the required constants:** `DISALLOW_FILE_EDIT` true, `AUTOMATIC_UPDATER_DISABLED` false, `WP_AUTO_UPDATE_CORE` true or `'minor'`, `FORCE_SSL_ADMIN` true, `DISALLOW_FILE_MODS` true, `AUTOSAVE_INTERVAL` 180, `WP_POST_REVISIONS` 10, `EMPTY_TRASH_DAYS` 15 and `WP_CRON_LOCK_TIMEOUT` 120.
+- **`wp-config.php` holds the required constants:** `DISALLOW_FILE_EDIT` true, `AUTOMATIC_UPDATER_DISABLED` false, `WP_AUTO_UPDATE_CORE` `'minor'` (true is also accepted), `FORCE_SSL_ADMIN` true, `DISALLOW_FILE_MODS` true, `AUTOSAVE_INTERVAL` 180, `WP_POST_REVISIONS` 10, `EMPTY_TRASH_DAYS` 15 and `WP_CRON_LOCK_TIMEOUT` 120.
   - Missing constants are inserted before the "stop editing" comment (or the `wp-settings.php` require).
   - Constants with a different value are changed on their own line.
   - With no safe insertion point, the item goes to manual review.

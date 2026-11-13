@@ -383,7 +383,7 @@ acrescenta o bloco ao final, sem apagar regras de outros plugins e com backup do
 - **`wp-content/.htaccess` com o padrão** (`<Files .htaccess>` com `Order Allow,Deny` / `Deny from all`), criado se
   não existir.
 - **`wp-config.php` com as constantes obrigatórias:** `DISALLOW_FILE_EDIT` true, `AUTOMATIC_UPDATER_DISABLED`
-  false, `WP_AUTO_UPDATE_CORE` true ou `'minor'`, `FORCE_SSL_ADMIN` true, `DISALLOW_FILE_MODS` true,
+  false, `WP_AUTO_UPDATE_CORE` `'minor'` (true também é aceito), `FORCE_SSL_ADMIN` true, `DISALLOW_FILE_MODS` true,
   `AUTOSAVE_INTERVAL` 180, `WP_POST_REVISIONS` 10, `EMPTY_TRASH_DAYS` 15 e `WP_CRON_LOCK_TIMEOUT` 120.
   - As que faltam entram antes do comentário "stop editing"/"pare de editar" (ou do `require` do
     `wp-settings.php`).

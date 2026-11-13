@@ -12,12 +12,13 @@ export const WP_CONFIG = 'wp-config.php';
 export const HTACCESS_TEMPLATE_FILE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'templates', 'root.htaccess');
 
 // Valores aceitos (normalizados) e o valor gravado quando a constante falta ou está diferente.
-// WP_AUTO_UPDATE_CORE aparece duas vezes no padrão do responsável (true e 'minor'): os dois são aceitos e, se faltar,
-// entra true (o que já estava nos sites). Definir a mesma constante duas vezes gera aviso do PHP, por isso só uma.
+// WP_AUTO_UPDATE_CORE aparece duas vezes no padrão do responsável (true e 'minor'): os dois são aceitos e, se faltar
+// ou tiver outro valor, entra 'minor' (decisão do responsável em 13/11/2026). Definir a mesma constante duas vezes
+// gera aviso do PHP, por isso só uma.
 export const REQUIRED_CONSTANTS = [
   { name: 'DISALLOW_FILE_EDIT', value: 'true' },
   { name: 'AUTOMATIC_UPDATER_DISABLED', value: 'false' },
-  { name: 'WP_AUTO_UPDATE_CORE', value: 'true', accept: ['true', "'minor'"] },
+  { name: 'WP_AUTO_UPDATE_CORE', value: "'minor'", accept: ['true', "'minor'"] },
   { name: 'FORCE_SSL_ADMIN', value: 'true' },
   { name: 'DISALLOW_FILE_MODS', value: 'true' },
   { name: 'AUTOSAVE_INTERVAL', value: '180' },
