@@ -16,6 +16,7 @@ import { assertSftp, connectSftpWithRetry, dataPaths, loadSites, sftpKey, writeF
 import { DROPIN_FILES, classifyPhp, isCacheRootPhp, isDropin } from './dropins.mjs';
 import { MU_PLUGINS_DIR, MU_PLUGIN_MAX_BYTES, classifyMuPlugin, isMuPluginPhp } from './mu-plugins.mjs';
 import { analyzeThemes, isThemePhp, listThemePhp, officialThemePackage } from './themes.mjs';
+import { MALICIOUS_PLUGIN } from './plugins.mjs';
 import { appendSection, bullet, dateBR, timeBR } from './report.mjs';
 import { RESOLVING_EVENTS, lastCleanupFinder, selectSites, siteArg } from './scope.mjs';
 import {
@@ -31,9 +32,8 @@ const ALERT_FILE = path.join(DATA_DIR, 'alerts.jsonl');
 const PLAN_FILE = path.join(DATA_DIR, 'last-cleanup-plan.json');
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
 const OFFICIAL_THEMES_DIR = path.join(DATA_DIR, 'official-themes');
-const MALICIOUS_PLUGIN = /^(vapor-curator-tap|pulse-beacon-ops|cloudflare-v2-23|script-4aec0f13-4aec0f13|wordpress-site-editor-e64d0d1c|wp-security-helper|smart-toolkit-plus|database-framework-edition|performance-fix-pro|smart-fix-edition|system-fix-plus|smart-cleaner-plus|smart-fix-pro|core-manager-plus|seo-patch-max|classic-cleaner-bundle|core-scanner-standard|wpueditors|fileorganizer|code-snippets|seo-framework-x|visual-scanner-edition)$|^(gallery|security|custom|widget)[_-]17781\d{5}$/;
-// Todos os da lista acima são apagados na limpeza, inclusive code-snippets e fileorganizer (legítimos no repositório,
-// mas usados pelo invasor): decisão do responsável em 09/11/2026, sem revisão manual.
+// MALICIOUS_PLUGIN (src/plugins.mjs): todos são apagados na limpeza, inclusive code-snippets, fileorganizer e
+// wp-file-manager (legítimos no repositório, mas proibidos por decisão do responsável), sem revisão manual.
 // Plugins "parecidos" ainda desconhecidos: nome no padrão do kit (sufixo hexadecimal de 8 dígitos, timestamp
 // 17781NNNNN, cloudflare-vN-NN) ou plugin pequeno cujo código é ofuscado e controlado pela requisição / se esconde.
 const SUSPICIOUS_PLUGIN_NAME = /[-_][0-9a-f]{8}(?:-[0-9a-f]{8})?$|[-_]1[5-9]\d{8}$|^cloudflare-v\d+-\d+$/i;
@@ -132,6 +132,8 @@ const ignoredInPlanMessages = new Set([
   'PHP malicioso em tema',
   'PHP suspeito em tema',
   'Temas não analisados',
+  // Conferido ao vivo na montagem do plano (pasta em wp-content/plugins com nome em MALICIOUS_PLUGIN → delete_directory).
+  'Plugin proibido ou malicioso instalado',
 ]);
 
 for (const alert of pendingAlerts) {

@@ -15,6 +15,7 @@ import { assertSftp, connectSftpWithRetry, dataPaths, loadSites, sftpKey, writeF
 import { classifyPhp, isCacheRootPhp, isDropin } from './dropins.mjs';
 import { MU_PLUGIN_MAX_BYTES, classifyMuPlugin, isMuPluginPhp } from './mu-plugins.mjs';
 import { analyzeThemes, isThemePhp, themeFindings } from './themes.mjs';
+import { MALICIOUS_PLUGIN, pluginSlugOf } from './plugins.mjs';
 import { appendSection, bullet, dateBR, number, timeBR } from './report.mjs';
 import { selectSites, siteArg } from './scope.mjs';
 import {
@@ -198,6 +199,18 @@ async function runCycle() {
         await emitAlert('high', site.key, dropin ? 'Drop-in sem origem reconhecida' : 'PHP em wp-content/cache sem origem reconhecida', { path: rel, size: file.size });
         totals.high += 1;
       }
+    }
+
+    // Plugins proibidos ou do kit (src/plugins.mjs, mesma lista que a limpeza apaga): crítico em todo ciclo enquanto
+    // estiverem instalados.
+    const bannedPlugins = new Set();
+    for (const file of remoteFiles) {
+      const slug = pluginSlugOf(file.path.slice(site.remoteRoot.length).replace(/^\//, ''));
+      if (slug && MALICIOUS_PLUGIN.test(slug)) bannedPlugins.add(slug);
+    }
+    for (const slug of bannedPlugins) {
+      await emitAlert('critical', site.key, 'Plugin proibido ou malicioso instalado', { plugin: slug, path: `wp-content/plugins/${slug}` });
+      totals.critical += 1;
     }
 
     // PHP em mu-plugins (carregado em toda requisição, sem ativação): malicioso pelo nome ou conteúdo → crítico em

@@ -370,10 +370,12 @@ Todo arquivo apagado pela limpeza tem cópia em
 `.monitor-data/backups/<plano>-<site>-arquivos/`.
 
 Pastas de plugin e tema maliciosas conhecidas (lista `MALICIOUS_PLUGIN` e temas `category_template_17781NNNNN`
-em `src/clean.mjs`) são apagadas inteiras, porque desativar não basta: os webshells dentro delas respondem por URL
+em `src/plugins.mjs`) são apagadas inteiras, porque desativar não basta: os webshells dentro delas respondem por URL
 direta. Antes de apagar, a pasta é baixada para o backup e a contagem de arquivos é conferida; se não bater, nada é
 apagado. Um tema só é apagado se não for o tema ativo (`template`/`stylesheet` no banco). `code-snippets` e
-`fileorganizer` também são apagados (legítimos no repositório, mas usados pelo invasor). Plugins **parecidos** ainda
+`fileorganizer` também são apagados (legítimos no repositório, mas usados pelo invasor), assim como o
+`wp-file-manager` (acesso total aos arquivos pelo painel, com histórico de falha explorada em massa). Enquanto um
+plugin da lista estiver instalado, a varredura gera o alerta crítico "Plugin proibido ou malicioso instalado". Plugins **parecidos** ainda
 desconhecidos também entram: pelo nome no padrão do kit (sufixo hexadecimal, número de data `17781NNNNN`,
 `cloudflare-vN-NN`) ou, em plugins pequenos (até 5 itens, sem subpastas) e `.php` soltos em `plugins/`, pelo
 conteúdo (código ofuscado controlado pela requisição, ou que se esconde da lista de plugins).
