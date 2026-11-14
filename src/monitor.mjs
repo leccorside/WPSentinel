@@ -14,6 +14,7 @@ import { MARKER_DIRS, isMalwareMarker } from './malware-markers.mjs';
 import { assertSftp, connectSftpWithRetry, dataPaths, loadSites, sftpKey, writeFileAtomic } from './config.mjs';
 import { classifyPhp, isCacheRootPhp, isDropin } from './dropins.mjs';
 import { MU_PLUGIN_MAX_BYTES, classifyMuPlugin, isMuPluginPhp } from './mu-plugins.mjs';
+import { analyzeThemes, isThemePhp, themeFindings } from './themes.mjs';
 import { appendSection, bullet, dateBR, number, timeBR } from './report.mjs';
 import { selectSites, siteArg } from './scope.mjs';
 import {
@@ -27,6 +28,8 @@ const { dataDir: DATA_DIR, reportsDir: REPORTS_DIR } = dataPaths(ROOT_DIR);
 const STATE_FILE = path.join(DATA_DIR, 'state.json');
 const BASELINE_FILE = path.join(DATA_DIR, 'trusted-baseline.json');
 const ALERT_FILE = path.join(DATA_DIR, 'alerts.jsonl');
+// Pacotes oficiais dos temas do wordpress.org (src/themes.mjs), baixados uma vez por versão.
+const OFFICIAL_THEMES_DIR = path.join(DATA_DIR, 'official-themes');
 
 const ONCE = process.argv.includes('--once');
 const RESET_BASELINE = process.argv.includes('--reset-baseline');
@@ -257,6 +260,27 @@ async function runCycle() {
           totals.high += 1;
         }
       }
+    }
+
+    // PHP dos temas (src/themes.mjs): tema do wordpress.org comparado com o pacote oficial da mesma versão; tema fora do
+    // repositório classificado pelo conteúdo (só o que mudou, salvo no ciclo de hash completo).
+    try {
+      const themes = await analyzeThemes({
+        sftp, root: site.remoteRoot, cacheDir: OFFICIAL_THEMES_DIR,
+        files: Object.entries(currentFiles).filter(([rel]) => isThemePhp(rel)).map(([rel, entry]) => ({ rel, size: entry.size, mtime: entry.mtime })),
+        knownHash: (file) => currentFiles[file.rel]?.hash || null,
+        shouldInspect: (file) => forceFullHash || previous.files?.[file.rel]?.hash !== currentFiles[file.rel]?.hash,
+      });
+      for (const theme of themes) {
+        console.log(`  Tema ${theme.slug} ${theme.version || '?'}: ${theme.official ? `oficial, ${theme.modified.length} alterado(s), ${theme.extra.length} a mais` : `fora do repositório (${theme.packageReason || '-'})`}${theme.malicious.length ? `, ${theme.malicious.length} malicioso(s)` : ''}`);
+        for (const finding of themeFindings(theme)) {
+          await emitAlert(finding.severity, site.key, finding.message, finding.details);
+          totals[finding.severity] += 1;
+        }
+      }
+    } catch (error) {
+      await emitAlert('high', site.key, 'Temas não analisados', { erro: error.message });
+      totals.high += 1;
     }
 
     const http = await inspectHttp(site);

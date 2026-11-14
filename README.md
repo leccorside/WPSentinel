@@ -115,6 +115,7 @@ WP Sentinel is an **external, agentless, read-only scanner** for WordPress websi
 - PHP files in `uploads`, hidden PHP files, dangerous filenames and webshell signatures.
 - Drop-ins (`wp-content/db.php`, `advanced-cache.php`, `object-cache.php`) and loose PHP files in `wp-content/cache/` (excluding cache-plugin subdirectories). `src/dropins.mjs` identifies known plugins (W3 Total Cache, WP Super Cache, LiteSpeed, Redis Object Cache, Query Monitor, etc.), suspicious origins and malicious signatures/obfuscation. Malicious files produce critical alerts on every scan; unknown origins produce high alerts when added or changed; recognized benign drop-ins are ignored.
 - PHP files in `wp-content/mu-plugins` (loaded on every request, with no activation), classified by `src/mu-plugins.mjs`. A file is malicious if it has a Unix timestamp in its name, text before `<?php`, XOR obfuscation with function names built from `chr()`, or a malware signature. Malicious files produce critical alerts on every scan. The home page is also checked when it returns HTTP 200: a blank or incomplete page, or a random comment injected before the HTML, produces a critical alert.
+- Theme PHP files (`src/themes.mjs`). Themes from wordpress.org are compared by SHA-256 with the official package of the same version (the `Version` in `style.css`). The package is downloaded once and cached in `.monitor-data/official-themes/`. A changed or extra file produces the alert "Tema difere do pacote oficial". In themes outside the repository, each PHP file is classified by its content and produces "PHP malicioso em tema" or "PHP suspeito em tema".
 - Login sessions (`session_tokens`): any new session yields a high alert; sessions from the server's own IP or with `WordPress/...` or an empty user agent yield a critical alert. Server IPs are derived from site domains, `SFTP_HOST`, `DB_HOST` and optional `SERVER_IPS`.
 - **Hidden SEO spam:** external links in fixed/absolute-positioned blocks with coordinates of −100 px or less. Checks homepage HTML as a browser and as Googlebot, as well as `_elementor_data` and `post_content` for pages, posts and templates in the database. Critical alerts identify the affected pages, widgets and domains. Detection lives in `src/hidden-links.mjs`.
 - HTTP availability, cross-domain redirects, security headers and blocking of `xmlrpc.php` and executable PHP in `uploads`.
@@ -336,7 +337,13 @@ Run `run-cleanup.cmd` after reviewing scan alerts. The cleanup tool:
 
 Use `npm run plan` to generate and inspect a plan **without executing cleanup**.
 
-Malicious drop-ins, loose PHP in `wp-content/cache/` and malicious mu-plugins may be removed; unknown-origin items (and mu-plugins over 1 MB) require manual review. Every removed file is backed up to `.monitor-data/backups/<plan>-<site>-files/` (the actual on-disk folder name follows the implementation's localized naming convention).
+Malicious drop-ins, loose PHP in `wp-content/cache/` and malicious mu-plugins may be removed; unknown-origin items (and mu-plugins over 1 MB) require manual review. In wordpress.org themes:
+
+- a changed file with a malware signal is restored from the official copy, with a home-page check and rollback if the page breaks;
+- a changed file with no signal (it may be a customization) goes to manual review;
+- an extra PHP file is deleted if malicious, otherwise it goes to manual review.
+
+In themes outside the repository, malicious or suspicious files go to manual review. Theme folders whose name ends with the kit timestamp (`*_17781NNNNN`) are deleted whole, never the active theme. Every removed file is backed up to `.monitor-data/backups/<plan>-<site>-files/` (the actual on-disk folder name follows the implementation's localized naming convention).
 
 Known malicious plugin and theme folders (`MALICIOUS_PLUGIN` list and `category_template_17781NNNNN` themes in `src/clean.mjs`) are deleted as a whole, because deactivating is not enough: webshells inside them answer direct URLs. Each folder is downloaded to the backup and its file count is checked before deletion; on a mismatch nothing is deleted. A theme is never deleted while it is the active theme (`template`/`stylesheet`). `code-snippets` and `fileorganizer` are deleted too (legitimate in the repository, but used by the attacker). Unknown **look-alike** plugins are also included: by a name in the kit's pattern (hex suffix, `17781NNNNN` timestamp, `cloudflare-vN-NN`) or, for small plugins (up to 5 entries, no subfolders) and loose `.php` files in `plugins/`, by content (obfuscated code driven by the request, or code that hides itself from the plugin list).
 
@@ -434,6 +441,7 @@ Reports can contain usernames, IP addresses and server paths. Keep them private.
 | `src/malware-markers.mjs` | Malware marker signatures. |
 | `src/dropins.mjs` | Drop-in classification. |
 | `src/mu-plugins.mjs` | Classification of PHP files in `wp-content/mu-plugins`. |
+| `src/themes.mjs` | Theme PHP analysis and comparison with the official wordpress.org package. |
 | `src/hidden-links.mjs` | Hidden-link detection. |
 
 </details>

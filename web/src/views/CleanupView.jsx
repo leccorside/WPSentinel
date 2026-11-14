@@ -573,10 +573,12 @@ export function CleanupView({
                                 ? 'Parâmetros obrigatórios no wp-config.php'
                                 : action.type === 'make_root_htaccess_readonly'
                                 ? '.htaccess da raiz somente leitura'
+                                : action.type === 'restore_theme_file'
+                                ? `Arquivo do tema restaurado do pacote oficial (${action.theme} ${action.version})`
                                 : 'Exclusão de Arquivo Malicioso'}
                             </span>
                             <span className="px-2 py-0.5 bg-error-container text-on-error-container font-mono text-[10px] uppercase rounded">
-                              {action.action === 'restore' ? 'Restaurar' : 'Excluir'}
+                              {action.action === 'restore' || action.type === 'restore_theme_file' ? 'Restaurar' : 'Excluir'}
                             </span>
                             {action.site && (
                               <span className="px-2 py-0.5 bg-surface-container text-outline font-mono text-[10px] uppercase rounded">

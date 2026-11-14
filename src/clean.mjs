@@ -15,6 +15,7 @@ import { MARKER_DIRS, isMalwareMarker } from './malware-markers.mjs';
 import { assertSftp, connectSftpWithRetry, dataPaths, loadSites, sftpKey, writeFileAtomic } from './config.mjs';
 import { DROPIN_FILES, classifyPhp, isCacheRootPhp, isDropin } from './dropins.mjs';
 import { MU_PLUGINS_DIR, MU_PLUGIN_MAX_BYTES, classifyMuPlugin, isMuPluginPhp } from './mu-plugins.mjs';
+import { analyzeThemes, isThemePhp, listThemePhp, officialThemePackage } from './themes.mjs';
 import { appendSection, bullet, dateBR, timeBR } from './report.mjs';
 import { RESOLVING_EVENTS, lastCleanupFinder, selectSites, siteArg } from './scope.mjs';
 import {
@@ -29,6 +30,7 @@ const BASELINE_FILE = path.join(DATA_DIR, 'trusted-baseline.json');
 const ALERT_FILE = path.join(DATA_DIR, 'alerts.jsonl');
 const PLAN_FILE = path.join(DATA_DIR, 'last-cleanup-plan.json');
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
+const OFFICIAL_THEMES_DIR = path.join(DATA_DIR, 'official-themes');
 const MALICIOUS_PLUGIN = /^(vapor-curator-tap|pulse-beacon-ops|cloudflare-v2-23|script-4aec0f13-4aec0f13|wordpress-site-editor-e64d0d1c|wp-security-helper|smart-toolkit-plus|database-framework-edition|performance-fix-pro|smart-fix-edition|system-fix-plus|smart-cleaner-plus|smart-fix-pro|core-manager-plus|seo-patch-max|classic-cleaner-bundle|core-scanner-standard|wpueditors|fileorganizer|code-snippets|seo-framework-x|visual-scanner-edition)$|^(gallery|security|custom|widget)[_-]17781\d{5}$/;
 // Todos os da lista acima são apagados na limpeza, inclusive code-snippets e fileorganizer (legítimos no repositório,
 // mas usados pelo invasor): decisão do responsável em 09/11/2026, sem revisão manual.
@@ -37,8 +39,9 @@ const MALICIOUS_PLUGIN = /^(vapor-curator-tap|pulse-beacon-ops|cloudflare-v2-23|
 const SUSPICIOUS_PLUGIN_NAME = /[-_][0-9a-f]{8}(?:-[0-9a-f]{8})?$|[-_]1[5-9]\d{8}$|^cloudflare-v\d+-\d+$/i;
 const SMALL_PLUGIN_ENTRIES = 5;
 const MAX_INSPECTED_PHP = 300 * 1024;
-// Temas falsos do mesmo kit (ex.: category_template_1778142327, com webshells archlve.php e *_obfuscated_*.php).
-const MALICIOUS_THEME = /^category_template_17781\d{5}$/;
+// Temas falsos do mesmo kit (ex.: category_template_1778142327 e post_1778142377, com webshells archlve.php e
+// *_obfuscated_*.php): qualquer pasta de tema com o timestamp do kit no fim do nome.
+const MALICIOUS_THEME = /^[a-z]+(?:[_-][a-z]+)*[_-]17781\d{5}$/i;
 // Logins criados pelo invasor, confirmados pelo responsável (09/11/2026: ninguém conhece "default_john_from_usa").
 const MALICIOUS_LOGINS = /^default_john_from_usa$/i;
 const REMOVABLE_DIRECTORY = /^wp-content\/(?:plugins|themes)\/[^/]+$/;
@@ -124,6 +127,11 @@ const ignoredInPlanMessages = new Set([
   'O .htaccess de wp-content não existe',
   // mu-plugins são classificados ao vivo na montagem do plano (src/mu-plugins.mjs) e os maliciosos viram delete_file.
   'mu-plugin malicioso',
+  // Temas: analisados ao vivo na montagem do plano (src/themes.mjs).
+  'Tema difere do pacote oficial',
+  'PHP malicioso em tema',
+  'PHP suspeito em tema',
+  'Temas não analisados',
 ]);
 
 for (const alert of pendingAlerts) {
@@ -154,6 +162,9 @@ for (const alert of pendingAlerts) {
 }
 
 plan.fileActions.push(...await inspectMalwareMarkers());
+// Arquivo de tema que será restaurado do pacote oficial não é apagado por um alerta antigo do mesmo caminho.
+const restoredPaths = new Set(plan.fileActions.filter((a) => a.type === 'restore_theme_file').map((a) => `${a.site}|${a.path}`));
+plan.fileActions = plan.fileActions.filter((a) => a.type !== 'delete_file' || !restoredPaths.has(`${a.site}|${a.path}`));
 
 // Links ocultos na home, conferidos agora (navegador e Googlebot): a origem é tratada pelas ações automáticas
 // (plugins/temas maliciosos, snippet, conteúdo, opções do banco) e a home é conferida de novo depois da execução.
@@ -263,6 +274,7 @@ async function writeCleanReport(status, { completed = [], verification = [], err
       delete_file: 'Arquivo removido', delete_directory: 'Pasta removida', ensure_uploads_htaccess: 'Bloqueio de PHP em uploads aplicado',
       restore_root_htaccess: '.htaccess da raiz regravado com o padrão', ensure_wp_config_constants: 'Parâmetros obrigatórios aplicados no wp-config.php',
       ensure_wp_content_htaccess: 'wp-content/.htaccess regravado com o padrão', make_root_htaccess_readonly: '.htaccess da raiz deixado somente leitura',
+      restore_theme_file: 'Arquivo do tema restaurado do pacote oficial',
       delete_users:'Usuários excluídos', delete_application_passwords: 'Application Passwords removidas',
       destroy_sessions: 'Sessões de login encerradas', disable_registration: 'Cadastro público desativado', delete_wpse_option: 'Opção wpse_user_id removida',
       restore_url: 'Endereço do site restaurado', remove_known_cron_hooks: 'Tarefas maliciosas removidas do WP-Cron', delete_malicious_options: 'Opções do malware removidas',
@@ -271,7 +283,7 @@ async function writeCleanReport(status, { completed = [], verification = [], err
       remove_hidden_links_options: 'Links ocultos removidos de opções do banco',
     };
     const describe = (a) => {
-      const extra = ['delete_file', 'delete_directory', 'ensure_uploads_htaccess', 'restore_root_htaccess', 'ensure_wp_config_constants', 'ensure_wp_content_htaccess', 'make_root_htaccess_readonly'].includes(a.type) ? `${a.path} (${a.reason})`
+      const extra = ['delete_file', 'delete_directory', 'ensure_uploads_htaccess', 'restore_root_htaccess', 'ensure_wp_config_constants', 'ensure_wp_content_htaccess', 'make_root_htaccess_readonly', 'restore_theme_file'].includes(a.type) ? `${a.path} (${a.reason})`
         : a.type === 'delete_users' ? `${a.logins?.length ? `${a.logins.join(', ')} — ` : ''}IDs ${a.ids.join(', ')}`
           : a.type === 'remove_known_cron_hooks' ? a.hooks.join(', ')
             : a.type === 'remove_malicious_active_plugins' ? a.plugins.join(', ')
@@ -582,6 +594,48 @@ async function inspectMalwareMarkers() {
             if (verdict === 'malicious') actions.push({ type: 'delete_file', site: site.key, path: rel, reason: `mu-plugin malicioso (${reason})` });
           }
         }
+        // PHP dos temas (src/themes.mjs). Tema do wordpress.org: arquivo diferente do pacote oficial da mesma versão é
+        // restaurado; PHP a mais é apagado se for malicioso, senão revisão manual. Tema fora do repositório: não há
+        // cópia oficial, então malicioso/suspeito vai para revisão manual. Temas falsos do kit saem inteiros acima.
+        const knownFiles = state.sites?.[site.key]?.files || {};
+        const themes = await analyzeThemes({
+          sftp, root: site.remoteRoot, cacheDir: OFFICIAL_THEMES_DIR,
+          files: await listThemePhp(sftp, site.remoteRoot),
+          knownHash: (file) => (knownFiles[file.rel]?.size === file.size && knownFiles[file.rel]?.mtime === file.mtime ? knownFiles[file.rel].hash : null),
+          skip: (slug) => MALICIOUS_THEME.test(slug),
+        });
+        for (const theme of themes) {
+          for (const file of theme.modified) {
+            // Diferença sem sinal de malware pode ser personalização (ex.: drlui614 com Google Tag no functions.php do
+            // royal-elementor-kit): vai para revisão manual em vez de ser sobrescrita.
+            if (!file.motivo) {
+              plan.manualReview.push({ severity: 'high', site: site.key, message: 'PHP do tema difere do pacote oficial sem sinal de malware; restaure se não for personalização', details: { path: file.path, tema: theme.slug, versao: theme.version } });
+              continue;
+            }
+            actions.push({
+              type: 'restore_theme_file', site: site.key, path: file.path, theme: theme.slug, version: theme.version,
+              reason: `Difere do pacote oficial ${theme.slug} ${theme.version}${file.motivo ? ` (${file.motivo})` : ''}; restaurar a cópia oficial`,
+            });
+          }
+          for (const file of theme.extra) {
+            if (file.motivo) {
+              actions.push({ type: 'delete_file', site: site.key, path: file.path, reason: `PHP a mais no tema oficial ${theme.slug} (${file.motivo})` });
+            } else {
+              plan.manualReview.push({ severity: 'high', site: site.key, message: 'PHP que não existe no pacote oficial do tema; confira antes de apagar', details: { path: file.path, tema: theme.slug, versao: theme.version, suspeita: file.suspeita } });
+            }
+          }
+          if (!theme.official) {
+            for (const file of theme.malicious) {
+              plan.manualReview.push({ severity: 'critical', site: site.key, message: 'PHP malicioso em tema fora do repositório oficial; restaure a cópia original do tema', details: { path: file.path, tema: theme.slug, motivo: file.motivo } });
+            }
+            for (const file of theme.suspicious) {
+              plan.manualReview.push({ severity: 'high', site: site.key, message: 'PHP suspeito em tema fora do repositório oficial; confira', details: { path: file.path, tema: theme.slug, motivo: file.motivo } });
+            }
+          }
+          for (const rel of theme.skipped) {
+            plan.manualReview.push({ severity: 'high', site: site.key, message: 'PHP de tema acima do limite de inspeção; confira', details: { path: rel, tema: theme.slug } });
+          }
+        }
         // Bloqueio de PHP em uploads, conferido agora pela sonda (403 = bloqueado). Sem bloqueio: cria o .htaccess ou
         // acrescenta o bloco ao existente (preserva regras de outros plugins). Se o bloco já está lá e mesmo assim não
         // dá 403, o servidor ignora .htaccess (ex.: Nginx): revisão manual em vez de repetir.
@@ -767,6 +821,44 @@ async function executeFileActions(actions, completed) {
         completed.push(action);
         const probe = await probeStatus(site);
         console.log(`Bloqueio de PHP em uploads ${current === null ? 'criado' : 'acrescentado ao .htaccess existente'}: ${site.name}/${action.path} — sonda agora: HTTP ${probe ?? 'sem resposta'}${probe === 403 ? ' (bloqueado)' : ' (ATENÇÃO: ainda não bloqueia; o servidor pode ignorar .htaccess)'}`);
+        continue;
+      }
+      if (action.type === 'restore_theme_file') {
+        // Restaura o PHP do tema com a cópia do pacote oficial da mesma versão (o ZIP guardado na montagem do plano).
+        const prefix = `wp-content/themes/${action.theme}/`;
+        if (!action.path.startsWith(prefix) || !isThemePhp(action.path)) throw new Error(`Caminho inesperado para restore_theme_file: ${action.path}`);
+        const pkg = await officialThemePackage(action.theme, action.version, OFFICIAL_THEMES_DIR);
+        const content = pkg.files?.get(action.path.slice(prefix.length));
+        if (!content) throw new Error(`Pacote oficial ${action.theme} ${action.version} indisponível para ${action.path} (${pkg.reason || 'arquivo fora do pacote'})`);
+        const current = (await sftp.exists(remotePath)) ? normalizeBuffer(await sftp.get(remotePath)) : null;
+        if (current !== null && current.equals(content)) continue;
+        const originalMode = current === null ? null : (await sftp.stat(remotePath)).mode & 0o777;
+        if (current !== null) {
+          const local = path.join(BACKUP_DIR, `${plan.id}-${site.key}-arquivos`, ...action.path.split('/'));
+          await fs.mkdir(path.dirname(local), { recursive: true });
+          await fs.writeFile(local, current);
+        }
+        const checkUrl = `${site.url}/`;
+        const before = await urlStatus(checkUrl);
+        if (current !== null && isReadOnly(originalMode)) await sftp.chmod(remotePath, 0o644);
+        await sftp.put(content, remotePath);
+        const after = await urlStatus(checkUrl);
+        if (before !== null && before < 500 && (after === null || after >= 500)) {
+          if (current !== null) {
+            await sftp.put(current, remotePath);
+            await sftp.chmod(remotePath, originalMode);
+          } else {
+            await sftp.delete(remotePath, false);
+          }
+          const restored = await urlStatus(checkUrl);
+          console.warn(`ATENÇÃO: a cópia oficial de ${site.name}/${action.path} derrubou o site (HTTP ${after ?? 'sem resposta'}); o arquivo anterior foi restaurado (HTTP ${restored ?? 'sem resposta'}).`);
+          plan.manualReview.push({ severity: 'critical', site: site.key, message: 'Cópia oficial do arquivo do tema derrubou o site e foi revertida; confira manualmente', details: { path: action.path, status: after } });
+          continue;
+        }
+        if (current !== null && isReadOnly(originalMode)) await sftp.chmod(remotePath, originalMode);
+        await trustWrittenFile(site, sftp, action.path, content);
+        completed.push(action);
+        console.log(`Restaurado do pacote oficial ${action.theme} ${action.version}: ${site.name}/${action.path} — home HTTP ${after}`);
         continue;
       }
       if (action.type === 'make_root_htaccess_readonly') {
@@ -1178,6 +1270,7 @@ function printPlan(value) {
     else if (action.type === 'ensure_wp_content_htaccess') console.log(`  [ARQUIVO] ${action.mode === 'create' ? 'criar' : 'regravar'} ${action.site}/${action.path} — ${action.reason}`);
     else if (action.type === 'ensure_wp_config_constants') console.log(`  [ARQUIVO] ajustar ${action.site}/${action.path} — ${action.reason}`);
     else if (action.type === 'make_root_htaccess_readonly') console.log(`  [PERMISSÃO] ${action.site}/${action.path} — ${action.reason}`);
+    else if (action.type === 'restore_theme_file') console.log(`  [ARQUIVO] restaurar ${action.site}/${action.path} — ${action.reason}`);
     else console.log(`  [${action.type === 'delete_directory' ? 'PASTA' : 'ARQUIVO'}] excluir ${action.site}/${action.path} — ${action.reason}`);
   }
   for (const action of value.databaseActions) console.log(`  [BANCO] ${action.site}: ${action.type} — ${action.reason}`);

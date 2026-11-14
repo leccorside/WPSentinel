@@ -117,6 +117,12 @@ todos no `.env` (nada de site fica no código), então ele serve para qualquer W
   `src/mu-plugins.mjs`. É malicioso quando tem timestamp no nome, texto antes do `<?php`, ofuscação XOR com funções
   montadas por `chr()` ou assinatura de malware, e gera alerta crítico em todo ciclo. A home com HTTP 200 também é
   conferida: página em branco ou incompleta, ou comentário injetado antes do HTML, gera alerta crítico;
+- PHP dos temas (`src/themes.mjs`):
+  - **Tema do wordpress.org:** comparado por SHA-256 com o pacote oficial da mesma versão (`Version` do `style.css`).
+    O pacote é baixado uma vez e guardado em `.monitor-data/official-themes/`. Arquivo alterado ou a mais gera o
+    alerta "Tema difere do pacote oficial".
+  - **Tema fora do repositório:** cada PHP é classificado pelo conteúdo e gera os alertas "PHP malicioso em tema" e
+    "PHP suspeito em tema";
 - sessões de login (`session_tokens`): toda sessão nova gera alerta alto; sessões abertas a partir
   do IP do próprio servidor ou com navegador `WordPress/...` (ou vazio) geram alerta crítico. Os IPs
   do servidor vêm do domínio de cada site, do `SFTP_HOST`, do `DB_HOST` e da variável opcional `SERVER_IPS`;
@@ -351,6 +357,15 @@ confirmação de limpeza.
 
 Também remove drop-ins e PHP em `wp-content/cache/` classificados como maliciosos (os de origem não
 reconhecida vão para revisão manual), além dos mu-plugins maliciosos (acima de 1 MB, revisão manual).
+Nos temas do wordpress.org:
+
+- arquivo alterado com sinal de malware é restaurado com a cópia oficial, com conferência da home e reversão se ela
+  quebrar;
+- alterado sem sinal (pode ser personalização) vai para revisão manual;
+- PHP a mais é apagado se for malicioso, senão vai para revisão manual.
+
+Em tema fora do repositório, malicioso ou suspeito vai para revisão manual. Pastas de tema com o timestamp do kit no
+nome (`*_17781NNNNN`) são apagadas inteiras, nunca o tema ativo.
 Todo arquivo apagado pela limpeza tem cópia em
 `.monitor-data/backups/<plano>-<site>-arquivos/`.
 
@@ -513,6 +528,7 @@ O arquivo `.env` contém segredos e está ignorado pelo Git. Não o envie por e-
 | `src/malware-markers.mjs` | Regras de marcadores suspeitos. |
 | `src/dropins.mjs` | Classificação de drop-ins. |
 | `src/mu-plugins.mjs` | Classificação dos PHP em `wp-content/mu-plugins`. |
+| `src/themes.mjs` | Análise dos PHP dos temas e comparação com o pacote oficial do wordpress.org. |
 | `src/hidden-links.mjs` | Detecção de links ocultos. |
 
 </details>

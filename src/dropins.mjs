@@ -13,6 +13,11 @@ const KNOWN_OWNERS = /W3 Total Cache|WP Super Cache|WP-Cache|LiteSpeed|Redis Obj
 
 const MAX_LINE = 5000; // linhas gigantes indicam código ofuscado; drop-ins legítimos não são minificados
 
+// Trecho da assinatura de malware encontrada no texto (ou null). Também usado na análise de mu-plugins e temas.
+export function malwareSignature(text) {
+  return text.match(MALWARE)?.[0] ?? null;
+}
+
 export function isDropin(rel) {
   return DROPIN_FILES.includes(rel);
 }
