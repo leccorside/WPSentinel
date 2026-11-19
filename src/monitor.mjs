@@ -13,9 +13,10 @@ import { lookupServerIps, parseSessions, suspiciousReasons } from './sessions.mj
 import { MARKER_DIRS, isMalwareMarker } from './malware-markers.mjs';
 import { assertSftp, connectSftpWithRetry, dataPaths, loadSites, sftpKey, writeFileAtomic } from './config.mjs';
 import { classifyPhp, isCacheRootPhp, isDropin } from './dropins.mjs';
-import { MU_PLUGIN_MAX_BYTES, classifyMuPlugin, isMuPluginPhp } from './mu-plugins.mjs';
+import { MU_PLUGIN_MAX_BYTES, classifyMuPlugin, isMuPluginPhp, phpMalwareSignal } from './mu-plugins.mjs';
 import { analyzeThemes, isThemePhp, themeFindings } from './themes.mjs';
 import { MALICIOUS_PLUGIN, pluginSlugOf } from './plugins.mjs';
+import { compareCore, coreChecksums, isCorePath, md5 as coreMd5, readCoreVersion } from './core.mjs';
 import { appendSection, bullet, dateBR, number, timeBR } from './report.mjs';
 import { selectSites, siteArg } from './scope.mjs';
 import {
@@ -31,6 +32,8 @@ const BASELINE_FILE = path.join(DATA_DIR, 'trusted-baseline.json');
 const ALERT_FILE = path.join(DATA_DIR, 'alerts.jsonl');
 // Pacotes oficiais dos temas do wordpress.org (src/themes.mjs), baixados uma vez por versão.
 const OFFICIAL_THEMES_DIR = path.join(DATA_DIR, 'official-themes');
+// Checksums oficiais do núcleo do WordPress (src/core.mjs), baixados uma vez por versão e idioma.
+const CORE_CHECKSUMS_DIR = path.join(DATA_DIR, 'core-checksums');
 // Fila das gravações no alerts.jsonl (appendAlertLine). Declarada aqui em cima: o fluxo principal roda em top-level
 // await e usaria a variável antes da declaração se ela ficasse junto da função.
 let alertWriteQueue = Promise.resolve();
@@ -239,15 +242,34 @@ async function runCycle() {
     const currentFiles = {};
     const candidates = remoteFiles.filter(shouldMonitor);
 
+    // Núcleo do WordPress (src/core.mjs): checksums oficiais da versão instalada. Arquivo do núcleo que muda para o
+    // conteúdo oficial (atualização automática) não gera alerta; sem checksums (rede, versão desconhecida), tudo segue
+    // como antes.
+    let core = null;
+    const coreVerifiedChanges = [];
+    const coreRemoved = [];
+    try {
+      const installed = await readCoreVersion(sftp, site.remoteRoot);
+      const sums = installed ? await coreChecksums(installed.version, installed.locale, CORE_CHECKSUMS_DIR) : { files: null, reason: 'wp-includes/version.php não lido' };
+      if (sums.files) core = { ...installed, files: sums.files };
+      else console.warn(`  Núcleo de ${site.name} não conferido: ${sums.reason}`);
+    } catch (error) {
+      console.warn(`  Núcleo de ${site.name} não conferido: ${error.message}`);
+    }
+
     await mapLimit(candidates, 4, async (file) => {
       const rel = file.path.slice(site.remoteRoot.length).replace(/^\//, '');
       const old = previous.files?.[rel];
       const changed = !old || old.size !== file.size || old.mtime !== file.modifyTime;
+      const officialSums = core?.files.get(rel);
       let hash = old?.hash || null;
+      let fileMd5 = old?.md5 || null;
 
-      if ((changed || forceFullHash) && file.size <= MAX_DOWNLOAD_BYTES) {
+      // Arquivo do núcleo ainda sem MD5 no estado é baixado uma vez para entrar na conferência.
+      if ((changed || forceFullHash || (officialSums && !fileMd5)) && file.size <= MAX_DOWNLOAD_BYTES) {
         const body = normalizeBuffer(await sftp.get(file.path));
         hash = crypto.createHash('sha256').update(body).digest('hex');
+        fileMd5 = coreMd5(body);
         if (!old || old.hash !== hash) {
           for (const finding of inspectFile(rel, body)) {
             await emitAlert(finding.severity, site.key, finding.message, { path: rel, size: file.size });
@@ -259,8 +281,11 @@ async function runCycle() {
         totals.high += 1;
       }
 
-      currentFiles[rel] = { hash, size: file.size, mtime: file.modifyTime };
-      if (old && hash && old.hash && hash !== old.hash) {
+      currentFiles[rel] = { hash, md5: fileMd5, size: file.size, mtime: file.modifyTime };
+      const isOfficial = Boolean(officialSums && fileMd5 && officialSums.has(fileMd5));
+      if (isOfficial && ((old && hash && old.hash && hash !== old.hash) || (!old && state.sites?.[site.key]))) {
+        coreVerifiedChanges.push(rel);
+      } else if (old && hash && old.hash && hash !== old.hash) {
         await emitAlert('high', site.key, 'Arquivo monitorado foi alterado', { path: rel, oldHash: old.hash, newHash: hash });
         totals.high += 1;
       } else if (!old && state.sites?.[site.key]) {
@@ -272,10 +297,45 @@ async function runCycle() {
     if (state.sites?.[site.key]) {
       for (const rel of Object.keys(previous.files || {})) {
         if (!currentFiles[rel] && !isKnownVolatileData(rel)) {
+          // Arquivo do núcleo que não existe mais na versão instalada: removido pela atualização.
+          if (core && isCorePath(rel) && !core.files.has(rel)) { coreRemoved.push(rel); continue; }
           await emitAlert('high', site.key, 'Arquivo monitorado foi removido', { path: rel });
           totals.high += 1;
         }
       }
+    }
+
+    // Conferência do núcleo com os checksums oficiais, em todo ciclo.
+    if (core) {
+      const result = compareCore(core.files, new Map(Object.entries(currentFiles).filter(([rel]) => isCorePath(rel)).map(([rel, entry]) => [rel, entry.md5 || null])));
+      const label = { versao: core.version, ...(core.locale ? { idioma: core.locale } : {}) };
+      if (result.mismatched.length) {
+        await emitAlert('critical', site.key, 'Arquivo do núcleo difere do oficial', { ...label, arquivos: result.mismatched.slice(0, 15), total: result.mismatched.length });
+        totals.critical += 1;
+      }
+      // PHP a mais: o conteúdo é classificado (19/11/2026: wp-includes/widgets/error_404_1778142368.php no drlui614,
+      // com o comentário do kit, estava na baseline e nunca tinha gerado alerta).
+      const maliciousExtras = [];
+      const otherExtras = [];
+      for (const rel of result.extras) {
+        const size = currentFiles[rel]?.size ?? 0;
+        const signal = size <= MAX_DOWNLOAD_BYTES ? phpMalwareSignal(normalizeBuffer(await sftp.get(`${site.remoteRoot}/${rel}`)).toString('latin1')) : null;
+        if (signal) maliciousExtras.push({ path: rel, motivo: signal });
+        else otherExtras.push(rel);
+      }
+      if (maliciousExtras.length) {
+        await emitAlert('critical', site.key, 'PHP malicioso no núcleo do WordPress', { ...label, arquivos: maliciousExtras.slice(0, 15), total: maliciousExtras.length });
+        totals.critical += 1;
+      }
+      if (otherExtras.length) {
+        await emitAlert('high', site.key, 'PHP fora do pacote oficial no núcleo', { ...label, arquivos: otherExtras.slice(0, 15), total: otherExtras.length });
+        totals.high += 1;
+      }
+      if (coreVerifiedChanges.length || coreRemoved.length) {
+        await emitAlert('info', site.key, 'Núcleo do WordPress conferido com o pacote oficial', { ...label, alterados: coreVerifiedChanges.length, removidos: coreRemoved.length });
+        await trustCoreChanges(site.key, currentFiles, coreVerifiedChanges, coreRemoved);
+      }
+      console.log(`  Núcleo ${core.version}${core.locale ? ` (${core.locale})` : ''}: ${result.verified.length} igual(is) ao oficial, ${result.mismatched.length} diferente(s), ${result.extras.length} PHP a mais${coreVerifiedChanges.length ? `, ${coreVerifiedChanges.length} atualizado(s) sem alerta` : ''}`);
     }
 
     // PHP dos temas (src/themes.mjs): tema do wordpress.org comparado com o pacote oficial da mesma versão; tema fora do
@@ -876,6 +936,19 @@ async function emitAlert(severity, site, message, details = {}) {
   console.error(`${color}[${severity.toUpperCase()}]\x1b[0m ${site}: ${message}${context ? ` — ${context}` : ''}`);
   await appendAlertLine(event);
   cycleAlerts.push(event);
+}
+
+// Arquivos do núcleo que mudaram (ou sumiram) para bater com o pacote oficial: a baseline confiável passa a ter o
+// conteúdo novo, como a limpeza faz com o que ela grava (trustWrittenFile), para a limpeza não tratá-los como
+// alteração suspeita.
+async function trustCoreChanges(siteKey, currentFiles, changed, removed) {
+  let trusted;
+  try { trusted = JSON.parse(await fs.readFile(BASELINE_FILE, 'utf8')); } catch { return; }
+  const files = trusted?.sites?.[siteKey]?.files;
+  if (!files) return;
+  for (const rel of changed) files[rel] = currentFiles[rel];
+  for (const rel of removed) delete files[rel];
+  await writeFileAtomic(BASELINE_FILE, `${JSON.stringify(trusted, null, 2)}\n`);
 }
 
 // Gravações no alerts.jsonl em fila, uma de cada vez: os alertas do inventário saem de 4 tarefas paralelas (mapLimit) e,

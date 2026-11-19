@@ -117,6 +117,13 @@ todos no `.env` (nada de site fica no código), então ele serve para qualquer W
   `src/mu-plugins.mjs`. É malicioso quando tem timestamp no nome, texto antes do `<?php`, ofuscação XOR com funções
   montadas por `chr()` ou assinatura de malware, e gera alerta crítico em todo ciclo. A home com HTTP 200 também é
   conferida: página em branco ou incompleta, ou comentário injetado antes do HTML, gera alerta crítico;
+- núcleo do WordPress (`src/core.mjs`): cada arquivo monitorado fora de `wp-content` é comparado por MD5 com os
+  checksums oficiais da versão instalada (`api.wordpress.org/core/checksums`, guardados em
+  `.monitor-data/core-checksums/`).
+  - Uma alteração que bate com o oficial (ex.: atualização automática) não gera alerta nem revisão manual.
+  - Arquivo diferente do oficial gera o alerta crítico "Arquivo do núcleo difere do oficial".
+  - PHP a mais em `wp-admin`, `wp-includes` ou na raiz gera "PHP malicioso no núcleo do WordPress" (crítico) ou
+    "PHP fora do pacote oficial no núcleo" (alto);
 - PHP dos temas (`src/themes.mjs`):
   - **Tema do wordpress.org:** comparado por SHA-256 com o pacote oficial da mesma versão (`Version` do `style.css`).
     O pacote é baixado uma vez e guardado em `.monitor-data/official-themes/`. Arquivo alterado ou a mais gera o
@@ -364,6 +371,13 @@ Nos temas do wordpress.org:
 - alterado sem sinal (pode ser personalização) vai para revisão manual;
 - PHP a mais é apagado se for malicioso, senão vai para revisão manual.
 
+No núcleo do WordPress:
+
+- arquivo diferente do oficial é restaurado com a cópia de `core.svn.wordpress.org`, conferida pelo MD5, com a mesma
+  conferência da home e reversão;
+- PHP a mais é apagado se for malicioso, senão vai para revisão manual;
+- alertas de alteração de arquivos do núcleo que hoje batem com o oficial saem da revisão manual.
+
 Em tema fora do repositório, malicioso ou suspeito vai para revisão manual. Pastas de tema com o timestamp do kit no
 nome (`*_17781NNNNN`) são apagadas inteiras, nunca o tema ativo.
 Todo arquivo apagado pela limpeza tem cópia em
@@ -531,6 +545,7 @@ O arquivo `.env` contém segredos e está ignorado pelo Git. Não o envie por e-
 | `src/dropins.mjs` | Classificação de drop-ins. |
 | `src/mu-plugins.mjs` | Classificação dos PHP em `wp-content/mu-plugins`. |
 | `src/themes.mjs` | Análise dos PHP dos temas e comparação com o pacote oficial do wordpress.org. |
+| `src/core.mjs` | Conferência do núcleo do WordPress com os checksums oficiais. |
 | `src/hidden-links.mjs` | Detecção de links ocultos. |
 
 </details>
