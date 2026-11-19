@@ -1352,9 +1352,20 @@ async function readJson(file, fallback) {
   }
 }
 
+// Linha corrompida (ex.: gravações simultâneas no volume do Docker no Windows deixaram pedaços como `…7f9e696f"}}`)
+// não interrompe a limpeza: vira um evento "info" no mesmo lugar, como no painel (server/data.mjs), para as posições
+// usadas por lastCleanupFinder continuarem iguais nas duas pontas.
 async function readJsonLines(file) {
   try {
-    return (await fs.readFile(file, 'utf8')).split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
+    let invalid = 0;
+    const events = (await fs.readFile(file, 'utf8')).split(/\r?\n/).filter(Boolean).map((line) => {
+      try { return JSON.parse(line); } catch {
+        invalid += 1;
+        return { severity: 'info', site: 'monitor', message: 'Linha inválida em alerts.jsonl', details: {} };
+      }
+    });
+    if (invalid) console.warn(`Aviso: ${invalid} linha(s) inválida(s) em ${path.basename(file)} ignorada(s).`);
+    return events;
   } catch (error) {
     if (error.code === 'ENOENT') return [];
     throw error;

@@ -31,6 +31,9 @@ const BASELINE_FILE = path.join(DATA_DIR, 'trusted-baseline.json');
 const ALERT_FILE = path.join(DATA_DIR, 'alerts.jsonl');
 // Pacotes oficiais dos temas do wordpress.org (src/themes.mjs), baixados uma vez por versão.
 const OFFICIAL_THEMES_DIR = path.join(DATA_DIR, 'official-themes');
+// Fila das gravações no alerts.jsonl (appendAlertLine). Declarada aqui em cima: o fluxo principal roda em top-level
+// await e usaria a variável antes da declaração se ela ficasse junto da função.
+let alertWriteQueue = Promise.resolve();
 
 const ONCE = process.argv.includes('--once');
 const RESET_BASELINE = process.argv.includes('--reset-baseline');
@@ -364,7 +367,7 @@ async function runCycle() {
       await writeFileAtomic(BASELINE_FILE, `${JSON.stringify(trusted, null, 2)}\n`);
       // O estado atual passou a ser o confiável: o que foi alertado antes deixa de estar pendente (src/scope.mjs).
       const event = { timestamp: new Date().toISOString(), severity: 'info', site: 'monitor', message: 'baseline_reset', details: { sites: sites.map((s) => s.key), cycle } };
-      await fs.appendFile(ALERT_FILE, `${JSON.stringify(event)}\n`, 'utf8');
+      await appendAlertLine(event);
       console.log(`Baseline redefinida para ${sites.map((s) => s.key).join(', ')} (ciclo ${cycle}).`);
     }
   }
@@ -871,8 +874,17 @@ async function emitAlert(severity, site, message, details = {}) {
   const color = severity === 'critical' ? '\x1b[31m' : '\x1b[33m';
   const context = alertContext(details);
   console.error(`${color}[${severity.toUpperCase()}]\x1b[0m ${site}: ${message}${context ? ` — ${context}` : ''}`);
-  await fs.appendFile(ALERT_FILE, `${JSON.stringify(event)}\n`, 'utf8');
+  await appendAlertLine(event);
   cycleAlerts.push(event);
+}
+
+// Gravações no alerts.jsonl em fila, uma de cada vez: os alertas do inventário saem de 4 tarefas paralelas (mapLimit) e,
+// no volume montado do Docker no Windows, appends simultâneos se sobrepunham e deixavam pedaços de linha no arquivo
+// (19/11/2026: `7ef180cc27f9e696f"}}`, que derrubava a limpeza). A fila (alertWriteQueue) fica no topo do arquivo.
+function appendAlertLine(event) {
+  const write = alertWriteQueue.then(() => fs.appendFile(ALERT_FILE, `${JSON.stringify(event)}\n`, 'utf8'));
+  alertWriteQueue = write.catch(() => {});
+  return write;
 }
 
 async function loadState() {
