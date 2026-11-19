@@ -20,6 +20,7 @@ export function Header({
   notifications = { unreadCount: 0, hasCriticalUnread: false, items: [] },
   onMarkRead,
   onMarkAllRead,
+  onClearNotifications,
   onNavigateView,
 }) {
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
@@ -175,6 +176,7 @@ export function Header({
             notifications={notifications}
             onMarkRead={onMarkRead}
             onMarkAllRead={onMarkAllRead}
+            onClearNotifications={onClearNotifications}
             onNavigateView={onNavigateView}
           />
         </div>

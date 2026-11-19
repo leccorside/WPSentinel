@@ -212,6 +212,8 @@ export default function App() {
         ...prev,
         unreadCount: data.unreadCount,
         hasCriticalUnread: data.hasCriticalUnread,
+        // "Limpar" feito em outra aba ou dispositivo: a lista também esvazia aqui.
+        ...(data.cleared ? { items: [] } : {}),
       }));
     },
   });
@@ -237,6 +239,13 @@ export default function App() {
         hasCriticalUnread: false,
         items: (prev?.items || []).map((item) => ({ ...item, read: true })),
       }));
+    } catch {}
+  };
+
+  const handleClearNotifications = async () => {
+    try {
+      await api.notifications.clear();
+      setNotifications((prev) => ({ ...prev, unreadCount: 0, hasCriticalUnread: false, items: [] }));
     } catch {}
   };
 
@@ -530,6 +539,7 @@ export default function App() {
         notifications={notifications}
         onMarkRead={handleMarkRead}
         onMarkAllRead={handleMarkAllRead}
+        onClearNotifications={handleClearNotifications}
         onNavigateView={handleNavigateView}
       />
 

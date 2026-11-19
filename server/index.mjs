@@ -68,6 +68,14 @@ app.post('/api/notifications/read', async (req, res, next) => {
   }
 });
 
+app.post('/api/notifications/clear', async (req, res, next) => {
+  try {
+    res.json(await notifications.clearNotifications());
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.use('/api/auth', auth.authRouter);
 app.use('/api', createFeaturesRouter({ paths: settings.paths, orchestrator }));
 app.use('/api', createOrchestratorRouter({ orchestrator, dataDir: settings.paths.dataDir }));

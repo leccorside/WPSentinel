@@ -54,12 +54,14 @@ export function createNotificationManager({ dataDir, orchestrator }) {
       return {
         readIds: Array.isArray(data.readIds) ? data.readIds : [],
         allReadBefore: data.allReadBefore || null,
+        clearedBefore: data.clearedBefore || null,
         updatedAt: data.updatedAt || null,
       };
     } catch {
       return {
         readIds: [],
         allReadBefore: null,
+        clearedBefore: null,
         updatedAt: null,
       };
     }
@@ -264,8 +266,11 @@ export function createNotificationManager({ dataDir, orchestrator }) {
       } catch {}
     }
 
-    // 2. Mescla alertas e notificações de sistema
-    const allItems = [...alertItems, ...systemNotifications];
+    // 2. Mescla alertas e notificações de sistema. As de antes do último "Limpar" não aparecem no sino (o alerts.jsonl
+    // não muda: a Visão Geral e a limpeza continuam vendo o histórico).
+    const clearedBeforeTime = readState.clearedBefore ? new Date(readState.clearedBefore).getTime() : 0;
+    const allItems = [...alertItems, ...systemNotifications]
+      .filter((item) => !clearedBeforeTime || new Date(item.timestamp).getTime() > clearedBeforeTime);
 
     // 3. Ordena decrescente por data
     allItems.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
@@ -334,11 +339,31 @@ export function createNotificationManager({ dataDir, orchestrator }) {
     };
   }
 
+  // Limpa o sino: oculta tudo o que existe até agora (alertas e avisos do sistema) e apaga os avisos do sistema
+  // guardados. Os alertas continuam no alerts.jsonl (histórico da Visão Geral e base do plano de limpeza).
+  async function clearNotifications() {
+    const state = await loadReadState();
+    const now = new Date().toISOString();
+    state.clearedBefore = now;
+    state.allReadBefore = now;
+    state.readIds = [];
+    state.updatedAt = now;
+    await saveReadState(state);
+    systemNotifications = [];
+    await saveSystemNotifications();
+
+    if (orchestrator?.broadcast) {
+      orchestrator.broadcast('notifications_updated', { unreadCount: 0, hasCriticalUnread: false, cleared: true });
+    }
+    return { ok: true, unreadCount: 0, hasCriticalUnread: false };
+  }
+
   return {
     startAlertsWatcher,
     stopAlertsWatcher,
     addSystemNotification,
     getNotifications,
     markAsRead,
+    clearNotifications,
   };
 }

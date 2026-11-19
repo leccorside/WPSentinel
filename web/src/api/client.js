@@ -99,5 +99,6 @@ export const api = {
     list: () => request('/api/notifications'),
     markRead: (id) => request('/api/notifications/read', { method: 'POST', body: JSON.stringify({ id }) }),
     markAllRead: () => request('/api/notifications/read', { method: 'POST', body: JSON.stringify({ all: true }) }),
+    clear: () => request('/api/notifications/clear', { method: 'POST', body: JSON.stringify({}) }),
   },
 };

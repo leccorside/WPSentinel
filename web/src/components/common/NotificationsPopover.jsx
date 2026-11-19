@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 function timeAgo(dateString) {
   if (!dateString) return '';
@@ -21,9 +21,22 @@ export function NotificationsPopover({
   notifications = { unreadCount: 0, hasCriticalUnread: false, items: [] },
   onMarkRead,
   onMarkAllRead,
+  onClearNotifications,
   onNavigateView,
 }) {
   const popoverRef = useRef(null);
+  // "Limpar" pede um segundo clique ("Confirmar?") para não esvaziar o sino sem querer; volta ao normal em 4 s.
+  const [confirmClear, setConfirmClear] = useState(false);
+
+  useEffect(() => {
+    if (!confirmClear) return undefined;
+    const timer = setTimeout(() => setConfirmClear(false), 4000);
+    return () => clearTimeout(timer);
+  }, [confirmClear]);
+
+  useEffect(() => {
+    if (!isOpen) setConfirmClear(false);
+  }, [isOpen]);
 
   // Fecha o popover ao clicar fora
   useEffect(() => {
@@ -108,17 +121,39 @@ export function NotificationsPopover({
           )}
         </div>
 
-        {unreadCount > 0 && (
-          <button
-            type="button"
-            onClick={onMarkAllRead}
-            className="flex items-center gap-1 text-[11px] font-mono text-primary hover:text-primary-container transition-colors cursor-pointer"
-            title="Marcar todas como lidas"
-          >
-            <span className="material-symbols-outlined text-sm">done_all</span>
-            <span>Marcar lidas</span>
-          </button>
-        )}
+        <div className="flex items-center gap-3 shrink-0">
+          {unreadCount > 0 && (
+            <button
+              type="button"
+              onClick={onMarkAllRead}
+              className="flex items-center gap-1 text-[11px] font-mono text-primary hover:text-primary-container transition-colors cursor-pointer"
+              title="Marcar todas como lidas"
+            >
+              <span className="material-symbols-outlined text-sm">done_all</span>
+              <span>Marcar lidas</span>
+            </button>
+          )}
+          {items.length > 0 && onClearNotifications && (
+            <button
+              type="button"
+              onClick={() => {
+                if (!confirmClear) {
+                  setConfirmClear(true);
+                  return;
+                }
+                setConfirmClear(false);
+                onClearNotifications();
+              }}
+              className={`flex items-center gap-1 text-[11px] font-mono transition-colors cursor-pointer ${
+                confirmClear ? 'text-error hover:text-on-surface' : 'text-outline hover:text-error'
+              }`}
+              title="Remover todas as notificações do sino (o histórico de alertas da Visão Geral continua)"
+            >
+              <span className="material-symbols-outlined text-sm">{confirmClear ? 'delete_forever' : 'delete_sweep'}</span>
+              <span>{confirmClear ? 'Confirmar?' : 'Limpar'}</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Lista com Scroll */}
