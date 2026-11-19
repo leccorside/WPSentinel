@@ -361,6 +361,11 @@ Las carpetas de plugins y temas maliciosos conocidos (lista `MALICIOUS_PLUGIN` y
 **Estándar de los archivos de la raíz** (`src/hardening.mjs`). El escaneo los comprueba en cada ciclo y la limpieza los corrige:
 
 - **El `.htaccess` de la raíz es idéntico a `templates/root.htaccess`.** Si difiere, la limpieza lo borra entero y graba la plantilla. Solo el destino de `RewriteRule . /index.php [L]` y el `RewriteBase` siguen al original, cuando el sitio está en una subcarpeta, y solo si el destino es un `index.php`. El bloque de cPanel con la versión de PHP se conserva si solo tiene el `AddHandler`. Las reglas de caché de otros plugins (LiteSpeed, Newfold...) se eliminan.
+  - **Excepción por sitio:** los bloques que graba el hosting se pueden aceptar con `"htaccessHostBlocks": ["newfold"]` en el sitio dentro de `.monitor-data/sites.json`. Este campo no aparece en el formulario del panel, pero guardar el sitio desde el panel no lo borra. Hoy solo lo usa mauriciosarmento.
+    - `newfold` acepta el `# NFD PATCH <nombre>` dentro del bloque de WordPress y el `# BEGIN/END NFD Htaccess` (caché del navegador y 404 de estáticos de Bluehost), que el plugin del hosting repone incluso en 0444.
+    - Un bloque solo se acepta si todas sus líneas son directivas de caché (`Expires*`, `Header` de `Cache-Control`, `Expires` y `Pragma`) o de "no reescribir" (`RewriteCond` y `RewriteRule .* - [L]`). Con una redirección o cualquier otra cosa, el archivo se trata como modificado y se graba de nuevo con la plantilla.
+    - Al grabarlo de nuevo, los bloques aceptados vuelven al mismo lugar.
+  - Un cambio del `.htaccess` de la raíz que sigue dentro del estándar no genera "Arquivo monitorado foi alterado" ni revisión manual.
 - **El `.htaccess` de la raíz es de solo lectura (0444).** La limpieza permite escribir solo durante su propia grabación.
 - **`wp-content/.htaccess` tiene el contenido estándar** (`<Files .htaccess>` con `Order Allow,Deny` / `Deny from all`). La limpieza lo crea si no existe.
 - **`wp-config.php` tiene las constantes obligatorias:** `DISALLOW_FILE_EDIT` true, `AUTOMATIC_UPDATER_DISABLED` false, `WP_AUTO_UPDATE_CORE` `'minor'` (true también se acepta), `FORCE_SSL_ADMIN` true, `DISALLOW_FILE_MODS` true, `AUTOSAVE_INTERVAL` 180, `WP_POST_REVISIONS` 10, `EMPTY_TRASH_DAYS` 15 y `WP_CRON_LOCK_TIMEOUT` 120.

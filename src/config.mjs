@@ -121,7 +121,15 @@ export function sanitizeSite(s) {
     // Logins WordPress permitidos no site. Se a lista existir, a limpeza exclui qualquer outro usuário (o conteúdo
     // dele é transferido para o primeiro permitido). Vazia = regra da baseline.
     allowedUsers: normalizeLogins(s.allowedUsers),
+    // Blocos que a hospedagem grava no .htaccess da raiz e que o site aceita além do modelo (src/hardening.mjs,
+    // HOST_BLOCKS). Ex.: ["newfold"] no mauriciosarmento (Bluehost), decisão do responsável em 19/11/2026.
+    htaccessHostBlocks: normalizeHostBlocks(s.htaccessHostBlocks),
   };
+}
+
+export function normalizeHostBlocks(value) {
+  const list = Array.isArray(value) ? value : String(value || '').split(/[,;\s]+/);
+  return [...new Set(list.map((id) => String(id).trim().toLowerCase()).filter((id) => /^[a-z0-9-]+$/.test(id)))];
 }
 
 export function normalizeLogins(value) {

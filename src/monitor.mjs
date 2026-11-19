@@ -285,6 +285,8 @@ async function runCycle() {
       const isOfficial = Boolean(officialSums && fileMd5 && officialSums.has(fileMd5));
       if (isOfficial && ((old && hash && old.hash && hash !== old.hash) || (!old && state.sites?.[site.key]))) {
         coreVerifiedChanges.push(rel);
+      } else if (rel === ROOT_HTACCESS && hardening.rootHtaccessStandard) {
+        // Conferido acima com o modelo: continua no padrão, então a alteração não vira alerta.
       } else if (old && hash && old.hash && hash !== old.hash) {
         await emitAlert('high', site.key, 'Arquivo monitorado foi alterado', { path: rel, oldHash: old.hash, newHash: hash });
         totals.high += 1;
@@ -595,7 +597,7 @@ async function inspectHardening(sftp, site) {
     const remote = `${site.remoteRoot}/${rel}`;
     return (await sftp.exists(remote)) ? normalizeBuffer(await sftp.get(remote)).toString('utf8') : null;
   };
-  const htaccess = checkRootHtaccess(await read(ROOT_HTACCESS), site.url);
+  const htaccess = checkRootHtaccess(await read(ROOT_HTACCESS), site.url, site.htaccessHostBlocks);
   const summary = { htaccess: !htaccess ? 'igual ao padrão' : htaccess.missing ? 'NÃO EXISTE' : 'DIFERENTE DO PADRÃO' };
   if (htaccess) {
     findings.push({
@@ -632,7 +634,9 @@ async function inspectHardening(sftp, site) {
       });
     }
   }
-  return { findings, summary };
+  // .htaccess da raiz dentro do padrão (com os blocos da hospedagem aceitos pelo site): uma alteração dele não é
+  // suspeita (ex.: a Newfold regravando os próprios blocos no mauriciosarmento).
+  return { findings, summary, rootHtaccessStandard: !htaccess };
 }
 
 async function httpRequest(url, userAgent = 'WordPress-External-Security-Monitor/1.0') {

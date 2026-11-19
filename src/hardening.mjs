@@ -67,9 +67,75 @@ const CPANEL_BLOCK = /# php -- BEGIN cPanel-generated handler, do not edit\n[\s\
 // Dentro do bloco do cPanel só é aceito o handler de versão do PHP (é o que o painel da hospedagem grava).
 const CPANEL_SAFE_LINE = /^(?:\s*|#.*|<IfModule mime_module>|<\/IfModule>|\s*AddHandler application\/x-httpd-(?:ea-|alt-)?php\d*(?:___lsphp)?(?:\s+\.\w+)+|\s*AddType application\/x-httpd-(?:ea-|alt-)?php\d*(?:\s+\.\w+)+)$/;
 
+// Blocos que a hospedagem grava no .htaccess e que um site pode aceitar (sites.json → htaccessHostBlocks).
+// newfold (Bluehost/HostGator novos, "Newfold Htaccess Manager", 19/11/2026 no mauriciosarmento): o patch
+// "NFD PATCH <nome>" dentro do bloco do WordPress e o bloco "NFD Htaccess" (cache do navegador e 404 de estáticos).
+// O plugin da hospedagem os repõe mesmo com o arquivo em 0444. Um bloco só é aceito se TODAS as linhas forem diretivas
+// de cache ou de "pular 404" (HOST_BLOCK_SAFE_LINE): com qualquer outra coisa (redirecionamento, handler, etc.) ele
+// é tratado como alteração e trocado pelo modelo.
+export const HOST_BLOCKS = {
+  newfold: [
+    { begin: /^# NFD PATCH [\w.-]+ BEGIN$/, end: /^# NFD PATCH [\w.-]+ END$/ },
+    { begin: /^# BEGIN NFD Htaccess$/, end: /^# END NFD Htaccess$/ },
+  ],
+};
+const ACCESS_PLUS = /"access plus \d+ (?:seconds?|minutes?|hours?|days?|weeks?|months?|years?)"/.source;
+const HOST_BLOCK_SAFE_LINE = new RegExp([
+  /^$/, /^#.*$/,
+  /^<IfModule mod_(?:expires|headers|rewrite)\.c>$/, /^<\/IfModule>$/,
+  /^ExpiresActive On$/,
+  new RegExp(`^ExpiresDefault ${ACCESS_PLUS}$`),
+  new RegExp(`^ExpiresByType [\\w.+-]+\\/[\\w.+-]+ ${ACCESS_PLUS}$`),
+  /^Header (?:always|onsuccess) (?:set|unset) (?:Cache-Control|Expires|Pragma)\b.*$/,
+  /^RewriteEngine On$/,
+  /^RewriteCond %\{REQUEST_(?:FILENAME|URI)\} \S+(?: \[NC\])?$/,
+  // Só "não reescrever" (sem destino): nunca redireciona para outro lugar.
+  /^RewriteRule \.\* - \[L\]$/,
+].map((re) => `(?:${re.source})`).join('|'));
+
+// Blocos aceitos encontrados no texto (normalizado), cada um com as linhas anteriores a ele, da mais próxima para a mais
+// distante (a primeira que existir no modelo é a âncora para reinserir no mesmo lugar). Bloco sem fim ou com linha
+// fora da lista segura não entra.
+function findHostBlocks(text, ids) {
+  const defs = ids.flatMap((id) => HOST_BLOCKS[id] || []);
+  if (!defs.length) return [];
+  const lines = text.split('\n');
+  const found = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const def = defs.find((d) => d.begin.test(lines[i].trim()));
+    if (!def) continue;
+    const end = lines.findIndex((line, j) => j > i && def.end.test(line.trim()));
+    if (end === -1) continue;
+    const block = lines.slice(i, end + 1);
+    if (block.every((line) => HOST_BLOCK_SAFE_LINE.test(line.trim()))) {
+      const before = lines.slice(0, i).map((line) => line.trim()).filter(Boolean).reverse();
+      found.push({ before, text: block.join('\n') });
+    }
+    i = end;
+  }
+  return found;
+}
+
+// Reinsere cada bloco aceito logo depois da âncora: a linha anterior a ele mais próxima que existe no texto esperado
+// (uma linha estranha logo antes do bloco não serve de âncora, porque não está no modelo). Sem âncora, no começo.
+// Assim o arquivo regravado volta a dar a mesma posição na próxima conferência.
+function insertHostBlocks(expected, blocks) {
+  let lines = expected.replace(/\n$/, '').split('\n');
+  for (const block of blocks) {
+    let at = -1;
+    for (const candidate of block.before) {
+      at = lines.findIndex((line) => line.trim() === candidate);
+      if (at !== -1) break;
+    }
+    lines = [...lines.slice(0, at + 1), ...block.text.split('\n'), ...lines.slice(at + 1)];
+  }
+  return `${lines.join('\n')}\n`;
+}
+
 // .htaccess esperado para o site: o modelo, com o destino do RewriteRule e o RewriteBase do original (ou do caminho
-// da URL do site, se não houver original) e o bloco do cPanel do original quando ele só define a versão do PHP.
-export function expectedRootHtaccess(current, siteUrl) {
+// da URL do site, se não houver original), o bloco do cPanel do original quando ele só define a versão do PHP e os
+// blocos da hospedagem aceitos pelo site (hostBlocks), no mesmo lugar do original.
+export function expectedRootHtaccess(current, siteUrl, hostBlocks = []) {
   let expected = loadHtaccessTemplate();
   const original = current === null ? '' : normalizeText(current);
   const sitePath = (() => { try { return new URL(siteUrl).pathname.replace(/\/?$/, '/'); } catch { return '/'; } })();
@@ -84,12 +150,13 @@ export function expectedRootHtaccess(current, siteUrl) {
   if (cpanel && cpanel.split('\n').every((line) => CPANEL_SAFE_LINE.test(line))) {
     expected = expected.replace(CPANEL_BLOCK, cpanel.endsWith('\n') ? cpanel : `${cpanel}\n`);
   }
-  return expected;
+  const blocks = findHostBlocks(original, hostBlocks);
+  return blocks.length ? insertHostBlocks(expected, blocks) : expected;
 }
 
 // Compara o .htaccess da raiz com o esperado. Devolve null se está igual; senão, as linhas a mais e a menos.
-export function checkRootHtaccess(current, siteUrl) {
-  const expected = expectedRootHtaccess(current, siteUrl);
+export function checkRootHtaccess(current, siteUrl, hostBlocks = []) {
+  const expected = expectedRootHtaccess(current, siteUrl, hostBlocks);
   if (current === null) return { missing: true, expected, extra: [], absent: [] };
   if (normalizeText(current) === expected) return null;
   const lines = (text) => normalizeText(text).split('\n').map((line) => line.trim()).filter(Boolean);

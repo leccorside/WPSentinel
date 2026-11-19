@@ -415,6 +415,17 @@ acrescenta o bloco ao final, sem apagar regras de outros plugins e com backup do
   Só o destino do `RewriteRule . /index.php [L]` e o `RewriteBase` seguem o original, quando o site está numa
   subpasta (aceito apenas se o destino for um `index.php`). O bloco do cPanel com a versão do PHP é preservado,
   desde que tenha só o `AddHandler`. Regras de cache de outros plugins (LiteSpeed, Newfold...) saem.
+  - **Exceção por site:** os blocos que a hospedagem grava podem ser aceitos com `"htaccessHostBlocks": ["newfold"]`
+    no site em `.monitor-data/sites.json`. Esse campo não aparece no formulário do painel, mas salvar o site pelo
+    painel não o apaga. Hoje só o mauriciosarmento usa.
+    - `newfold` aceita o `# NFD PATCH <nome>` dentro do bloco do WordPress e o `# BEGIN/END NFD Htaccess` (cache do
+      navegador e 404 de estáticos da Bluehost), que o plugin da hospedagem repõe mesmo em 0444.
+    - Um bloco só é aceito se todas as linhas forem diretivas de cache (`Expires*`, `Header` de `Cache-Control`,
+      `Expires` e `Pragma`) ou de "não reescrever" (`RewriteCond` e `RewriteRule .* - [L]`). Com redirecionamento ou
+      qualquer outra coisa, o arquivo é tratado como alterado e regravado com o modelo.
+    - Na regravação, os blocos aceitos voltam no mesmo lugar.
+  - Uma alteração do `.htaccess` da raiz que continua no padrão não gera "Arquivo monitorado foi alterado" nem
+    revisão manual.
 - **`.htaccess` da raiz somente leitura (0444).** A limpeza libera a escrita só durante a própria gravação.
 - **`wp-content/.htaccess` com o padrão** (`<Files .htaccess>` com `Order Allow,Deny` / `Deny from all`), criado se
   não existir.

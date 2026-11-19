@@ -334,6 +334,7 @@ export function createFeaturesRouter({ paths, orchestrator = null }) {
         },
         spamContentSince: s.spamContentSince,
         allowedUsers: s.allowedUsers || [],
+        htaccessHostBlocks: s.htaccessHostBlocks || [],
       })),
     });
   }));
@@ -382,6 +383,8 @@ export function createFeaturesRouter({ paths, orchestrator = null }) {
       spamContentSince: data.spamContentSince || null,
       // Mantém a lista atual quando o formulário não a envia.
       allowedUsers: data.allowedUsers !== undefined ? data.allowedUsers : existing?.allowedUsers || [],
+      // Idem para os blocos da hospedagem aceitos no .htaccess (configurados direto no sites.json).
+      htaccessHostBlocks: data.htaccessHostBlocks !== undefined ? data.htaccessHostBlocks : existing?.htaccessHostBlocks || [],
     });
 
     let updatedList;

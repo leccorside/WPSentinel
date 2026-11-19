@@ -361,6 +361,11 @@ Known malicious plugin and theme folders (`MALICIOUS_PLUGIN` list and `category_
 **Root files standard** (`src/hardening.mjs`). The scan checks these every cycle and cleanup fixes them:
 
 - **The root `.htaccess` is identical to `templates/root.htaccess`.** If it differs, cleanup wipes it and writes the template. Only the target of `RewriteRule . /index.php [L]` and the `RewriteBase` are kept from the original, for sites in a subfolder, and only if the target is an `index.php`. The cPanel PHP-version block is kept when it holds only the `AddHandler`. Other plugins' cache rules (LiteSpeed, Newfold...) are removed.
+  - **Per-site exception:** blocks written by the host can be accepted with `"htaccessHostBlocks": ["newfold"]` on the site in `.monitor-data/sites.json`. The field is not shown in the panel form, but saving the site from the panel keeps it. Today only mauriciosarmento uses it.
+    - `newfold` accepts the `# NFD PATCH <name>` inside the WordPress block and the `# BEGIN/END NFD Htaccess` block (Bluehost browser cache and static-file 404 handling), which the host plugin puts back even at 0444.
+    - A block is accepted only if every line is a cache directive (`Expires*`, `Header` for `Cache-Control`, `Expires` and `Pragma`) or a "do not rewrite" rule (`RewriteCond` and `RewriteRule .* - [L]`). With a redirect or anything else, the file is treated as changed and rewritten from the template.
+    - On rewrite, the accepted blocks go back to the same place.
+  - A change to the root `.htaccess` that still matches the standard produces no "Arquivo monitorado foi alterado" alert and no manual review.
 - **The root `.htaccess` is read-only (0444).** Cleanup allows writing only during its own write.
 - **`wp-content/.htaccess` holds the standard content** (`<Files .htaccess>` with `Order Allow,Deny` / `Deny from all`). Cleanup creates it if missing.
 - **`wp-config.php` holds the required constants:** `DISALLOW_FILE_EDIT` true, `AUTOMATIC_UPDATER_DISABLED` false, `WP_AUTO_UPDATE_CORE` `'minor'` (true is also accepted), `FORCE_SSL_ADMIN` true, `DISALLOW_FILE_MODS` true, `AUTOSAVE_INTERVAL` 180, `WP_POST_REVISIONS` 10, `EMPTY_TRASH_DAYS` 15 and `WP_CRON_LOCK_TIMEOUT` 120.

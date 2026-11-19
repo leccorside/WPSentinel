@@ -107,6 +107,9 @@ const pendingAlerts = alerts.filter((event, index) => !RESOLVING_EVENTS.has(even
 const flaggedPlugins = new Map();
 // Arquivos do núcleo iguais ao checksum oficial, por site (preenchido na conferência do núcleo, src/core.mjs).
 const coreVerified = new Map();
+// Sites cujo .htaccess da raiz está no padrão agora (com os blocos da hospedagem aceitos): o alerta genérico de
+// alteração dele sai da revisão manual.
+const rootHtaccessStandard = new Set();
 const plan = {
   createdAt: new Date().toISOString(), scope: SITE_KEY ? [SITE_KEY] : null,
   fileActions: [], databaseActions: [], manualReview: [],
@@ -185,9 +188,10 @@ const reviewBefore = plan.manualReview.length;
 plan.manualReview = plan.manualReview.filter((item) => {
   const key = `${item.site}|${item.details?.path}`;
   if (item.details?.path && restoredPaths.has(key)) return false;
+  if (CORE_CHANGE_MESSAGES.has(item.message) && item.details?.path === ROOT_HTACCESS && rootHtaccessStandard.has(item.site)) return false;
   return !(CORE_CHANGE_MESSAGES.has(item.message) && coreVerified.get(item.site)?.has(item.details?.path));
 });
-if (reviewBefore !== plan.manualReview.length) console.log(`${reviewBefore - plan.manualReview.length} alerta(s) de arquivo saíram da revisão manual: núcleo igual ao oficial ou restauração já planejada.`);
+if (reviewBefore !== plan.manualReview.length) console.log(`${reviewBefore - plan.manualReview.length} alerta(s) de arquivo saíram da revisão manual: núcleo igual ao oficial, .htaccess da raiz no padrão ou restauração já planejada.`);
 
 // Links ocultos na home, conferidos agora (navegador e Googlebot): a origem é tratada pelas ações automáticas
 // (plugins/temas maliciosos, snippet, conteúdo, opções do banco) e a home é conferida de novo depois da execução.
@@ -681,7 +685,8 @@ async function inspectMalwareMarkers() {
         // wp-config.php, vai para revisão manual.
         const rootHtaccess = `${site.remoteRoot}/${ROOT_HTACCESS}`;
         const htaccessNow = (await sftp.exists(rootHtaccess)) ? normalizeBuffer(await sftp.get(rootHtaccess)).toString('utf8') : null;
-        const htaccessDiff = checkRootHtaccess(htaccessNow, site.url);
+        const htaccessDiff = checkRootHtaccess(htaccessNow, site.url, site.htaccessHostBlocks);
+        if (!htaccessDiff) rootHtaccessStandard.add(site.key);
         if (htaccessDiff) {
           actions.push({
             type: 'restore_root_htaccess', site: site.key, path: ROOT_HTACCESS, mode: htaccessDiff.missing ? 'create' : 'replace',
@@ -964,7 +969,7 @@ async function executeFileActions(actions, completed) {
         // gravado em latin1, que preserva os bytes originais qualquer que seja a codificação do arquivo.
         let content;
         if (isRootHtaccess) {
-          content = Buffer.from(expectedRootHtaccess(current === null ? null : current.toString('utf8'), site.url), 'utf8');
+          content = Buffer.from(expectedRootHtaccess(current === null ? null : current.toString('utf8'), site.url, site.htaccessHostBlocks), 'utf8');
           if (current !== null && current.equals(content) && isReadOnly(originalMode)) continue;
         } else if (action.type === 'ensure_wp_content_htaccess') {
           content = Buffer.from(WP_CONTENT_HTACCESS_CONTENT, 'utf8');
