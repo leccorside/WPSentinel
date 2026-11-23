@@ -453,7 +453,7 @@ Los informes pueden contener nombres de usuario, direcciones IP y rutas del serv
 | `src/malware-markers.mjs` | Reglas de marcadores de malware. |
 | `src/dropins.mjs` | Clasificación de drop-ins. |
 | `src/mu-plugins.mjs` | Clasificación de los PHP en `wp-content/mu-plugins`. |
-| `src/alert-log.mjs` | Escritura en `alerts.jsonl` con bloqueo entre procesos (la carpeta `alerts.jsonl.lock`) y por lotes. |
+| `src/alert-log.mjs` | Escritura en `alerts.jsonl` con bloqueo entre procesos (la carpeta `alerts.jsonl.lock`) y por lotes. El mismo bloqueo protege los informes diarios, que se escriben de forma atómica (`src/report.mjs`). |
 | `src/themes.mjs` | Análisis de los PHP de los temas y comparación con el paquete oficial de wordpress.org. |
 | `src/core.mjs` | Verificación del núcleo de WordPress con los checksums oficiales. |
 | `src/hidden-links.mjs` | Detección de enlaces ocultos. |

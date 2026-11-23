@@ -11,7 +11,7 @@ import mysql from 'mysql2/promise';
 import { findHiddenBlocks, scanElementorData } from './hidden-links.mjs';
 import { lookupServerIps, parseSessions, suspiciousReasons } from './sessions.mjs';
 import { MARKER_DIRS, isMalwareMarker } from './malware-markers.mjs';
-import { assertSftp, connectSftpWithRetry, dataPaths, loadSites, sftpKey, writeFileAtomic } from './config.mjs';
+import { assertSftp, connectSftpWithRetry, dataPaths, describeDbError, loadSites, sftpKey, writeFileAtomic } from './config.mjs';
 import { classifyPhp, isCacheRootPhp, isDropin } from './dropins.mjs';
 import { MU_PLUGIN_MAX_BYTES, classifyMuPlugin, isMuPluginPhp, phpMalwareSignal } from './mu-plugins.mjs';
 import { analyzeThemes, isThemePhp, themeFindings } from './themes.mjs';
@@ -848,7 +848,8 @@ async function inspectDatabase(site, previousSiteState) {
     console.log(`${site.name}: banco verificado; ${normalizedUsers.length} usuário(s), ${normalizedPosts.length} post(s)/página(s), ${cronHooks.length} hook(s) cron.`);
     return { findings, users: normalizedUsers, snapshot };
   } catch (error) {
-    console.warn(`${site.name}: banco não verificado (${error.code || error.message}).`);
+    const db = describeDbError(error);
+    console.warn(`${site.name}: banco não verificado (${db.text}): ${db.message}`);
     return { findings, users: [], snapshot: null };
   } finally {
     await connection?.end().catch(() => {});

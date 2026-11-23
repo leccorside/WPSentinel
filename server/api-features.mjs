@@ -13,7 +13,7 @@ import path from 'node:path';
 import express from 'express';
 import mysql from 'mysql2/promise';
 import SftpClient from 'ssh2-sftp-client';
-import { loadSites, saveSites, sanitizeSite, connectSftpWithRetry } from '../src/config.mjs';
+import { loadSites, saveSites, sanitizeSite, connectSftpWithRetry, describeDbError } from '../src/config.mjs';
 import { lookupServerIps, parseSessions, suspiciousReasons } from '../src/sessions.mjs';
 import { ENV_FILE, readEnvFile } from './config.mjs';
 import { confirmationFor, deleteReviewedPath, isDeletablePath } from './manual-delete.mjs';
@@ -560,13 +560,16 @@ async function testMysql(site) {
       database: site.db.database,
     };
   } catch (err) {
+    const db = describeDbError(err);
     return {
       enabled: true,
       ok: false,
       latencyMs: Date.now() - start,
       host: site.db.host,
       port: site.db.port,
-      error: err.code || err.message,
+      error: db.text,
+      errorMessage: db.message,
+      refusedIp: db.ip,
     };
   } finally {
     if (connection) await connection.end().catch(() => {});

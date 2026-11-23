@@ -127,6 +127,17 @@ export function sanitizeSite(s) {
   };
 }
 
+// Erro do MySQL descrito para o plano, o log e o painel: código, mensagem completa e o IP que o servidor recusou
+// (ex.: "Access denied for user 'u'@'191.7.29.11' (using password: YES)"). Em 23/11/2026 a limpeza guardou só o
+// código e não deu para saber de qual IP o acesso foi negado. A mensagem do MySQL nunca traz a senha.
+export function describeDbError(error) {
+  const message = String(error?.sqlMessage || error?.message || error || '');
+  const ip = message.match(/'@'([^']+)'/)?.[1] || null;
+  const code = error?.code || null;
+  const text = `${code || 'erro'}${ip ? ` (IP recusado: ${ip})` : ''}`;
+  return { code, message, ip, text };
+}
+
 export function normalizeHostBlocks(value) {
   const list = Array.isArray(value) ? value : String(value || '').split(/[,;\s]+/);
   return [...new Set(list.map((id) => String(id).trim().toLowerCase()).filter((id) => /^[a-z0-9-]+$/.test(id)))];

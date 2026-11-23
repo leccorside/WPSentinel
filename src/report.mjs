@@ -3,6 +3,7 @@
 // seções numeradas, no mesmo formato do relatório manual (reports/REPORT-23.10.26.txt).
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { withFileLock } from './alert-log.mjs';
 
 const TZ = 'America/Sao_Paulo';
 const RULE = '-----------------------------------------------------';
@@ -39,9 +40,16 @@ export function wrap(text, indent = '  ', firstIndent = indent) {
 export const bullet = (text, level = 1) => wrap(text, '  '.repeat(level) + '  ', '  '.repeat(level) + '- ');
 
 // Acrescenta uma seção ao relatório do dia. `title` sem número; `lines` já formatadas.
-export async function appendSection(reportsDir, { title, summary = [], lines = [] }, date = new Date()) {
+// Com a trava entre processos (pasta `<relatório>.lock`, src/alert-log.mjs) e gravação atômica: o texto novo vai para
+// um arquivo temporário e só então substitui o relatório. Em 23/11/2026 o relatório do dia ficou com 0 bytes; com o
+// writeFile direto, uma gravação interrompida ou simultânea podia zerar ou sobrescrever o arquivo.
+export async function appendSection(reportsDir, section, date = new Date()) {
   await fs.mkdir(reportsDir, { recursive: true });
   const file = reportFile(reportsDir, date);
+  return withFileLock(file, () => writeSection(file, section, date));
+}
+
+async function writeSection(file, { title, summary = [], lines = [] }, date) {
   let current = '';
   try { current = await fs.readFile(file, 'utf8'); } catch (error) { if (error.code !== 'ENOENT') throw error; }
   let out = current;
@@ -58,6 +66,13 @@ export async function appendSection(reportsDir, { title, summary = [], lines = [
   const numbers = [...out.matchAll(/^(\d+)\. /gm)].map((m) => Number(m[1]));
   const next = (numbers.length ? Math.max(...numbers) : 0) + 1;
   const section = ['', '', RULE, `${next}. ${title}`, RULE, '', ...summary, ...(summary.length && lines.length ? [''] : []), ...lines, ''];
-  await fs.writeFile(file, out.replace(/\s*$/, '\n') + section.join('\n'), 'utf8');
+  const temp = `${file}.tmp-${process.pid}`;
+  try {
+    await fs.writeFile(temp, out.replace(/\s*$/, '\n') + section.join('\n'), 'utf8');
+    await fs.rename(temp, file);
+  } catch (error) {
+    await fs.rm(temp, { force: true }).catch(() => {});
+    throw error;
+  }
   return file;
 }

@@ -12,7 +12,7 @@ import mysql from 'mysql2/promise';
 import { serialize, unserialize } from 'php-serialize';
 import { cleanElementorRaw, findHiddenBlocks, scanElementorData, stripHiddenBlocks } from './hidden-links.mjs';
 import { MARKER_DIRS, isMalwareMarker } from './malware-markers.mjs';
-import { assertSftp, connectSftpWithRetry, dataPaths, loadSites, sftpKey, writeFileAtomic } from './config.mjs';
+import { assertSftp, connectSftpWithRetry, dataPaths, describeDbError, loadSites, sftpKey, writeFileAtomic } from './config.mjs';
 import { DROPIN_FILES, classifyPhp, isCacheRootPhp, isDropin } from './dropins.mjs';
 import { MU_PLUGINS_DIR, MU_PLUGIN_MAX_BYTES, classifyMuPlugin, isMuPluginPhp, phpMalwareSignal } from './mu-plugins.mjs';
 import { analyzeThemes, isThemePhp, listThemePhp, officialThemePackage } from './themes.mjs';
@@ -212,7 +212,14 @@ for (const site of sites) {
     plan.manualReview.push(...dbPlan.manualReview);
     activeThemes.set(site.key, dbPlan.activeThemes);
   } catch (error) {
-    plan.manualReview.push({ severity: 'critical', site: site.key, message: `Banco do site não verificado: ${error.code || error.message}` });
+    // Mensagem completa e IP recusado no plano (describeDbError): sem eles, não dá para saber se foi senha ou IP fora
+    // do MySQL Remoto da hospedagem.
+    const db = describeDbError(error);
+    console.warn(`Banco de ${site.name} não verificado: ${db.message || db.code}`);
+    plan.manualReview.push({
+      severity: 'critical', site: site.key, message: `Banco do site não verificado: ${db.text}`,
+      details: { codigo: db.code, erro: db.message, ip_recusado: db.ip, host: `${site.db.host}:${site.db.port}` },
+    });
   }
 }
 
