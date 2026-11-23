@@ -17,6 +17,7 @@ import { MU_PLUGIN_MAX_BYTES, classifyMuPlugin, isMuPluginPhp, phpMalwareSignal 
 import { analyzeThemes, isThemePhp, themeFindings } from './themes.mjs';
 import { MALICIOUS_PLUGIN, pluginSlugOf } from './plugins.mjs';
 import { compareCore, coreChecksums, isCorePath, md5 as coreMd5, readCoreVersion } from './core.mjs';
+import { createAlertWriter } from './alert-log.mjs';
 import { appendSection, bullet, dateBR, number, timeBR } from './report.mjs';
 import { selectSites, siteArg } from './scope.mjs';
 import {
@@ -34,9 +35,9 @@ const ALERT_FILE = path.join(DATA_DIR, 'alerts.jsonl');
 const OFFICIAL_THEMES_DIR = path.join(DATA_DIR, 'official-themes');
 // Checksums oficiais do núcleo do WordPress (src/core.mjs), baixados uma vez por versão e idioma.
 const CORE_CHECKSUMS_DIR = path.join(DATA_DIR, 'core-checksums');
-// Fila das gravações no alerts.jsonl (appendAlertLine). Declarada aqui em cima: o fluxo principal roda em top-level
-// await e usaria a variável antes da declaração se ela ficasse junto da função.
-let alertWriteQueue = Promise.resolve();
+// Gravador do alerts.jsonl com trava entre processos e lotes (src/alert-log.mjs). Declarado aqui em cima: o fluxo
+// principal roda em top-level await e usaria a variável antes da declaração se ela ficasse junto das funções.
+const alertWriter = createAlertWriter(ALERT_FILE);
 
 const ONCE = process.argv.includes('--once');
 const RESET_BASELINE = process.argv.includes('--reset-baseline');
@@ -99,6 +100,8 @@ do {
     await emitAlert('critical', 'monitor', 'Falha geral da varredura', { error: error.message });
     return { high: 0, critical: 1 };
   });
+  // Todos os alertas do ciclo gravados antes do relatório e da próxima espera (e antes de o processo sair, no --once).
+  await alertWriter.drain();
 
   const seconds = Math.round((Date.now() - startedAt.getTime()) / 1000);
   console.log(`Ciclo concluído em ${seconds}s: ${result.high} alto(s), ${result.critical} crítico(s).`);
@@ -955,13 +958,11 @@ async function trustCoreChanges(siteKey, currentFiles, changed, removed) {
   await writeFileAtomic(BASELINE_FILE, `${JSON.stringify(trusted, null, 2)}\n`);
 }
 
-// Gravações no alerts.jsonl em fila, uma de cada vez: os alertas do inventário saem de 4 tarefas paralelas (mapLimit) e,
-// no volume montado do Docker no Windows, appends simultâneos se sobrepunham e deixavam pedaços de linha no arquivo
-// (19/11/2026: `7ef180cc27f9e696f"}}`, que derrubava a limpeza). A fila (alertWriteQueue) fica no topo do arquivo.
+// Põe o alerta na fila do gravador (lotes com trava entre processos, src/alert-log.mjs) sem esperar a gravação: numa
+// rajada (23/11/2026: ~6.400 alertas de uma atualização de plugins) esperar cada linha pegaria a trava milhares de
+// vezes. O fim de cada ciclo espera tudo ser gravado (alertWriter.drain). Falha de gravação vira aviso no console.
 function appendAlertLine(event) {
-  const write = alertWriteQueue.then(() => fs.appendFile(ALERT_FILE, `${JSON.stringify(event)}\n`, 'utf8'));
-  alertWriteQueue = write.catch(() => {});
-  return write;
+  alertWriter.append(event).catch((error) => console.warn(`Alerta não gravado no alerts.jsonl: ${error.message}`));
 }
 
 async function loadState() {

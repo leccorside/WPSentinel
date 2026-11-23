@@ -7,6 +7,7 @@ import path from 'node:path';
 import SftpClient from 'ssh2-sftp-client';
 import { connectSftpWithRetry } from '../src/config.mjs';
 import { appendSection, bullet, dateBR, timeBR } from '../src/report.mjs';
+import { appendAlertEvents } from '../src/alert-log.mjs';
 
 // Pastas só dentro de plugins/themes (ex.: um plugin legítimo usado pelo invasor); arquivos em qualquer lugar
 // abaixo da raiz do WordPress, exceto o wp-config.php, que derrubaria o site.
@@ -59,7 +60,7 @@ export async function deleteReviewedPath({ site, rel, dataDir, reportsDir, reaso
     timestamp: new Date().toISOString(), severity: 'info', site: site.key, message: 'manual_delete',
     details: { path: rel, tipo: result.kind, arquivos: result.files, backup, motivo: reason },
   };
-  await fs.appendFile(path.join(dataDir, 'alerts.jsonl'), `${JSON.stringify(event)}\n`, 'utf8');
+  await appendAlertEvents(path.join(dataDir, 'alerts.jsonl'), event);
   try {
     const now = new Date();
     await appendSection(reportsDir, {

@@ -555,6 +555,7 @@ O arquivo `.env` contém segredos e está ignorado pelo Git. Não o envie por e-
 | `src/malware-markers.mjs` | Regras de marcadores suspeitos. |
 | `src/dropins.mjs` | Classificação de drop-ins. |
 | `src/mu-plugins.mjs` | Classificação dos PHP em `wp-content/mu-plugins`. |
+| `src/alert-log.mjs` | Gravação no `alerts.jsonl` com trava entre processos (pasta `alerts.jsonl.lock`) e em lotes. |
 | `src/themes.mjs` | Análise dos PHP dos temas e comparação com o pacote oficial do wordpress.org. |
 | `src/core.mjs` | Conferência do núcleo do WordPress com os checksums oficiais. |
 | `src/hidden-links.mjs` | Detecção de links ocultos. |

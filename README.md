@@ -453,6 +453,7 @@ Reports can contain usernames, IP addresses and server paths. Keep them private.
 | `src/malware-markers.mjs` | Malware marker signatures. |
 | `src/dropins.mjs` | Drop-in classification. |
 | `src/mu-plugins.mjs` | Classification of PHP files in `wp-content/mu-plugins`. |
+| `src/alert-log.mjs` | Writes to `alerts.jsonl` with a cross-process lock (the `alerts.jsonl.lock` folder) and in batches. |
 | `src/themes.mjs` | Theme PHP analysis and comparison with the official wordpress.org package. |
 | `src/core.mjs` | WordPress core verification against the official checksums. |
 | `src/hidden-links.mjs` | Hidden-link detection. |

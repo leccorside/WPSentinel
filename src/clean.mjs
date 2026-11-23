@@ -17,6 +17,7 @@ import { DROPIN_FILES, classifyPhp, isCacheRootPhp, isDropin } from './dropins.m
 import { MU_PLUGINS_DIR, MU_PLUGIN_MAX_BYTES, classifyMuPlugin, isMuPluginPhp, phpMalwareSignal } from './mu-plugins.mjs';
 import { analyzeThemes, isThemePhp, listThemePhp, officialThemePackage } from './themes.mjs';
 import { MALICIOUS_PLUGIN } from './plugins.mjs';
+import { appendAlertEvents } from './alert-log.mjs';
 import { compareCore, coreChecksums, isCoreAreaPhp, isCorePath, listCoreFiles, mapLimit as coreMapLimit, md5 as coreMd5, officialCoreFile, readCoreVersion } from './core.mjs';import { appendSection, bullet, dateBR, timeBR } from './report.mjs';
 import { RESOLVING_EVENTS, lastCleanupFinder, selectSites, siteArg } from './scope.mjs';
 import {
@@ -291,7 +292,7 @@ const event = {
   timestamp: new Date().toISOString(), severity: 'info', site: 'monitor',
   message: 'cleanup_completed', details: { planId: plan.id, sites: sites.map((s) => s.key), completed, verification },
 };
-await fs.appendFile(ALERT_FILE, `${JSON.stringify(event)}\n`, 'utf8');
+await appendAlertEvents(ALERT_FILE, event);
 console.log(`\nLimpeza ${plan.id} concluída: ${completed.length} ação(ões). Execute a varredura novamente para validar.`);
 
 // Seção do relatório diário (reports/REPORT-DD.MM.AA.txt) para esta execução da limpeza.
